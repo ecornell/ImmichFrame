@@ -31,6 +31,7 @@
 	const VIDEO_STALL_MS = 15000;
 	const CURSOR_HIDE_MS = 2000;
 	const RELOAD_ON_ERROR_MS = 30000;
+	const MAX_ASSET_HISTORY = 250;
 
 	let assetHistory: api.AssetResponseDto[] = $state([]);
 	let assetBacklog: api.AssetResponseDto[] = $state([]);
@@ -143,9 +144,31 @@
 			}
 
 			error = false;
-			assetBacklog = assetRequest.data.filter(
+			const supportedAssets = assetRequest.data.filter(
 				(asset) => isImageAsset(asset) || isVideoAsset(asset)
 			);
+			const recentAssetIds = new Set([
+				...assetHistory.map((asset) => asset.id),
+				...displayingAssets.map((asset) => asset.id)
+			]);
+			const uniqueAssets = supportedAssets.filter(
+				(asset, index, assets) =>
+					assets.findIndex((candidate) => candidate.id === asset.id) === index
+			);
+			const unseenAssets = uniqueAssets.filter((asset) => !recentAssetIds.has(asset.id));
+
+			if (unseenAssets.length) {
+				assetBacklog = unseenAssets;
+			} else {
+				// Small libraries may contain only recently shown assets. In that case, prefer the
+				// asset that was displayed longest ago rather than leaving the slideshow empty.
+				const recency = new Map(
+					[...assetHistory, ...displayingAssets].map((asset, index) => [asset.id, index])
+				);
+				assetBacklog = [...uniqueAssets].sort(
+					(a, b) => (recency.get(a.id) ?? -1) - (recency.get(b.id) ?? -1)
+				);
+			}
 		} catch {
 			error = true;
 		}
@@ -232,8 +255,8 @@
 			assetHistory.push(...displayingAssets);
 		}
 
-		if (assetHistory.length > 250) {
-			assetHistory = assetHistory.slice(-250);
+		if (assetHistory.length > MAX_ASSET_HISTORY) {
+			assetHistory = assetHistory.slice(-MAX_ASSET_HISTORY);
 		}
 
 		displayingAssets = next;
