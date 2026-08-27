@@ -41,6 +41,25 @@ npm run build    # static build into immichFrame.Web/build (copied to wwwroot in
 
 CI (`.github/workflows/test.yml`) runs only the two `dotnet test` projects — there are no frontend tests. Every PR must carry at least one label (`.github/workflows/pr-require-label.yml`), and labels drive changelog categories in `.github/release.yml`.
 
+## Production operations
+
+Production-specific values and the rollback procedure are documented in
+`DEPLOYMENT.md`. Before deploying:
+
+1. Require a clean working tree unless the operator explicitly accepts a dirty,
+   non-reproducible emergency build.
+2. Run the backend tests and frontend checks/build.
+3. Never infer that a client route exists from HTTP 200 alone: ASP.NET serves the
+   SPA fallback for unknown paths. Use `scripts/smoke-prod.sh`, which inspects the
+   compiled Svelte route manifest and the admin settings API.
+4. Do not deploy a settings editor without `AuthenticationSecret` unless the
+   operator explicitly accepts anonymous configuration reads and writes on the
+   reachable network.
+5. Never commit `Settings.json`, its `.bak`, API-key files, environment files, or
+   generated deployment archives. Deleting a secret in a later commit does not
+   remove it from Git history; rotate the credential and rewrite unpublished
+   history before merging.
+
 ## Architecture
 
 ### Settings pipeline
