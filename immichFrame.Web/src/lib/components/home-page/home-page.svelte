@@ -32,9 +32,13 @@
 	const CURSOR_HIDE_MS = 2000;
 	const RELOAD_ON_ERROR_MS = 30000;
 	const MAX_ASSET_HISTORY = 250;
+	const MAX_RECENT_ASSETS = 1000;
+	const ASSET_REQUEST_ATTEMPTS = 4;
+	const RECENT_ASSETS_STORAGE_PREFIX = 'immichframe:recent-assets:';
 
 	let assetHistory: api.AssetResponseDto[] = $state([]);
 	let assetBacklog: api.AssetResponseDto[] = $state([]);
+	let recentAssetKeys: string[] = loadRecentAssetKeys();
 
 	let displayingAssets: api.AssetResponseDto[] = $state([]);
 
@@ -131,42 +135,91 @@
 		});
 	}
 
+	function recentAssetsStorageKey() {
+		return `${RECENT_ASSETS_STORAGE_PREFIX}${$clientIdentifierStore ?? 'default'}`;
+	}
+
+	function assetHistoryKey(asset: api.AssetResponseDto) {
+		return asset.checksum || asset.id;
+	}
+
+	function loadRecentAssetKeys(): string[] {
+		if (typeof window === 'undefined') return [];
+
+		try {
+			const stored = JSON.parse(window.localStorage.getItem(recentAssetsStorageKey()) ?? '[]');
+			return Array.isArray(stored)
+				? stored.filter((id): id is string => typeof id === 'string').slice(-MAX_RECENT_ASSETS)
+				: [];
+		} catch {
+			return [];
+		}
+	}
+
+	function recordRecentAssets(assets: api.AssetResponseDto[]) {
+		for (const asset of assets) {
+			const key = assetHistoryKey(asset);
+			recentAssetKeys = recentAssetKeys.filter((candidate) => candidate !== key);
+			recentAssetKeys.push(key);
+		}
+
+		recentAssetKeys = recentAssetKeys.slice(-MAX_RECENT_ASSETS);
+		try {
+			window.localStorage.setItem(recentAssetsStorageKey(), JSON.stringify(recentAssetKeys));
+		} catch (err) {
+			console.warn('Failed to save recent asset history:', err);
+		}
+	}
+
 	async function loadAssets() {
 		try {
-			let assetRequest = await api.getAssets({ clientIdentifier: $clientIdentifierStore });
+			const candidates = new Map<string, api.AssetResponseDto>();
+			const recentAssetKeysSet = new Set([
+				...recentAssetKeys,
+				...assetHistory.map(assetHistoryKey),
+				...displayingAssets.map(assetHistoryKey)
+			]);
 
-			if (assetRequest.status != 200) {
-				if (assetRequest.status == 401) {
-					authError = true;
+			for (let attempt = 0; attempt < ASSET_REQUEST_ATTEMPTS; attempt++) {
+				const assetRequest = await api.getAssets({ clientIdentifier: $clientIdentifierStore });
+
+				if (assetRequest.status != 200) {
+					if (assetRequest.status == 401) {
+						authError = true;
+					}
+					error = true;
+					return;
 				}
-				error = true;
-				return;
+
+				for (const asset of assetRequest.data) {
+					const key = assetHistoryKey(asset);
+					if ((isImageAsset(asset) || isVideoAsset(asset)) && !candidates.has(key)) {
+						candidates.set(key, asset);
+					}
+				}
+
+				const unseenCount = [...candidates.keys()].filter(
+					(key) => !recentAssetKeysSet.has(key)
+				).length;
+				if (unseenCount >= PRELOAD_ASSETS) break;
 			}
 
 			error = false;
-			const supportedAssets = assetRequest.data.filter(
-				(asset) => isImageAsset(asset) || isVideoAsset(asset)
+			const uniqueAssets = [...candidates.values()];
+			const unseenAssets = uniqueAssets.filter(
+				(asset) => !recentAssetKeysSet.has(assetHistoryKey(asset))
 			);
-			const recentAssetIds = new Set([
-				...assetHistory.map((asset) => asset.id),
-				...displayingAssets.map((asset) => asset.id)
-			]);
-			const uniqueAssets = supportedAssets.filter(
-				(asset, index, assets) =>
-					assets.findIndex((candidate) => candidate.id === asset.id) === index
-			);
-			const unseenAssets = uniqueAssets.filter((asset) => !recentAssetIds.has(asset.id));
 
 			if (unseenAssets.length) {
 				assetBacklog = unseenAssets;
 			} else {
-				// Small libraries may contain only recently shown assets. In that case, prefer the
-				// asset that was displayed longest ago rather than leaving the slideshow empty.
-				const recency = new Map(
-					[...assetHistory, ...displayingAssets].map((asset, index) => [asset.id, index])
-				);
+				// Once every returned asset has been seen, restart with the least-recently shown
+				// candidate rather than whichever asset happened to be first in the API response.
+				const recency = new Map(recentAssetKeys.map((key, index) => [key, index]));
 				assetBacklog = [...uniqueAssets].sort(
-					(a, b) => (recency.get(a.id) ?? -1) - (recency.get(b.id) ?? -1)
+					(a, b) =>
+						(recency.get(assetHistoryKey(a)) ?? -1) -
+						(recency.get(assetHistoryKey(b)) ?? -1)
 				);
 			}
 		} catch {
@@ -262,6 +315,7 @@
 		displayingAssets = next;
 		await updateAssetPromises();
 		assetsState = await pickAssets(next);
+		if (assetsState.loaded) recordRecentAssets(next);
 	}
 
 	async function getPreviousAssets() {
@@ -279,6 +333,7 @@
 		displayingAssets = next;
 		await updateAssetPromises();
 		assetsState = await pickAssets(next);
+		if (assetsState.loaded) recordRecentAssets(next);
 	}
 
 	function isPortrait(asset: api.AssetResponseDto) {
