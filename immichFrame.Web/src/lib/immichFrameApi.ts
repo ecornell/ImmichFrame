@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * ImmichFrame.WebApi
  * 1.0
@@ -13,6 +12,125 @@ export const defaults: Oazapfts.Defaults<Oazapfts.CustomHeaders> = {
 };
 const oazapfts = Oazapfts.runtime(defaults);
 export const servers = {};
+export type AdminGeneralSettingsDto = {
+    downloadImages?: boolean;
+    language?: string | null;
+    imageLocationFormat?: string | null;
+    photoDateFormat?: string | null;
+    interval?: number;
+    transitionDuration?: number;
+    showClock?: boolean;
+    clockFormat?: string | null;
+    clockDateFormat?: string | null;
+    showProgressBar?: boolean;
+    showPhotoDate?: boolean;
+    showImageDesc?: boolean;
+    showPeopleDesc?: boolean;
+    showTagsDesc?: boolean;
+    showAlbumName?: boolean;
+    showImageLocation?: boolean;
+    primaryColor?: string | null;
+    secondaryColor?: string | null;
+    style?: string | null;
+    baseFontSize?: string | null;
+    showWeatherDescription?: boolean;
+    weatherIconUrl?: string | null;
+    imageZoom?: boolean;
+    imagePan?: boolean;
+    imageFill?: boolean;
+    playAudio?: boolean;
+    layout?: string | null;
+    renewImagesDuration?: number;
+    webcalendars?: string[] | null;
+    refreshAlbumPeopleInterval?: number;
+    weatherApiKey?: string | null;
+    unitSystem?: string | null;
+    weatherLatLong?: string | null;
+    webhook?: string | null;
+};
+export type AdminAccountViewDto = {
+    index?: number;
+    immichServerUrl?: string | null;
+    apiKeyIsSet?: boolean;
+    apiKeySource?: string | null;
+    apiKeyFile?: string | null;
+    showMemories?: boolean;
+    showFavorites?: boolean;
+    showArchived?: boolean;
+    showVideos?: boolean;
+    imagesFromDays?: number | null;
+    imagesFromDate?: string | null;
+    imagesUntilDate?: string | null;
+    albums?: string[] | null;
+    excludedAlbums?: string[] | null;
+    people?: string[] | null;
+    tags?: string[] | null;
+    rating?: number | null;
+};
+export type AdminSettingsViewDto = {
+    version?: number;
+    configFilePath?: string | null;
+    canPersist?: boolean;
+    warnings?: string[] | null;
+    general?: AdminGeneralSettingsDto;
+    accounts?: AdminAccountViewDto[] | null;
+};
+export type AdminAccountUpdateDto = {
+    index?: number | null;
+    immichServerUrl?: string | null;
+    apiKey?: string | null;
+    apiKeyFile?: string | null;
+    showMemories?: boolean;
+    showFavorites?: boolean;
+    showArchived?: boolean;
+    showVideos?: boolean;
+    imagesFromDays?: number | null;
+    imagesFromDate?: string | null;
+    imagesUntilDate?: string | null;
+    albums?: string[] | null;
+    excludedAlbums?: string[] | null;
+    people?: string[] | null;
+    tags?: string[] | null;
+    rating?: number | null;
+};
+export type AdminSettingsUpdateDto = {
+    version?: number;
+    force?: boolean;
+    general?: AdminGeneralSettingsDto;
+    accounts?: AdminAccountUpdateDto[] | null;
+};
+export type AccountProbeResultDto = {
+    index?: number;
+    immichServerUrl?: string | null;
+    reachable?: boolean;
+    serverVersion?: string | null;
+    versionSupported?: boolean;
+    error?: string | null;
+};
+export type SaveSettingsResultDto = {
+    applied?: boolean;
+    version?: number;
+    problems?: string[] | null;
+    warnings?: string[] | null;
+    accountResults?: AccountProbeResultDto[] | null;
+};
+export type AdminBrowseRequestDto = {
+    index?: number | null;
+    immichServerUrl?: string | null;
+    apiKey?: string | null;
+};
+export type CatalogEntryDto = {
+    id?: string | null;
+    name?: string | null;
+    count?: number | null;
+};
+export type AdminBrowseResultDto = {
+    reachable?: boolean;
+    error?: string | null;
+    albums?: CatalogEntryDto[] | null;
+    people?: CatalogEntryDto[] | null;
+    tags?: CatalogEntryDto[] | null;
+};
 export type ExifResponseDto = {
     city?: string | null;
     country?: string | null;
@@ -237,6 +355,56 @@ export type IWeather = {
     description?: string | null;
     iconId?: string | null;
 };
+export function getAdminSettings(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.fetchJson<{
+        status: 200;
+        data: AdminSettingsViewDto;
+    }>("/api/AdminSettings", {
+        ...opts
+    });
+}
+export function saveAdminSettings(adminSettingsUpdateDto?: AdminSettingsUpdateDto, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.fetchJson<{
+        status: 200;
+        data: SaveSettingsResultDto;
+    } | {
+        status: 400;
+        data: SaveSettingsResultDto;
+    } | {
+        status: 409;
+        data: SaveSettingsResultDto;
+    } | {
+        status: 422;
+        data: SaveSettingsResultDto;
+    } | {
+        status: 500;
+        data: SaveSettingsResultDto;
+    }>("/api/AdminSettings", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: adminSettingsUpdateDto
+    }));
+}
+export function validateAdminSettings(adminSettingsUpdateDto?: AdminSettingsUpdateDto, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.fetchJson<{
+        status: 200;
+        data: SaveSettingsResultDto;
+    }>("/api/AdminSettings/Validate", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: adminSettingsUpdateDto
+    }));
+}
+export function browseImmichCatalog(adminBrowseRequestDto?: AdminBrowseRequestDto, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.fetchJson<{
+        status: 200;
+        data: AdminBrowseResultDto;
+    }>("/api/AdminSettings/Browse", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: adminBrowseRequestDto
+    }));
+}
 export function getAssets({ clientIdentifier }: {
     clientIdentifier?: string;
 } = {}, opts?: Oazapfts.RequestOpts) {

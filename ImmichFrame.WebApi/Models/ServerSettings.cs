@@ -13,7 +13,7 @@ public class ServerSettings : IServerSettings, IConfigSettable
 
     [YamlMember(Alias = "Accounts")]
     [JsonPropertyName("Accounts")]
-    public IEnumerable<ServerAccountSettings> AccountsImpl { get; set; }
+    public IEnumerable<ServerAccountSettings> AccountsImpl { get; set; } = new List<ServerAccountSettings>();
 
     //Covariance not allowed on interface impls
     [JsonIgnore]
@@ -22,7 +22,7 @@ public class ServerSettings : IServerSettings, IConfigSettable
 
     [JsonIgnore]
     [YamlIgnore]
-    public IEnumerable<IAccountSettings> Accounts => AccountsImpl;
+    public IEnumerable<IAccountSettings> Accounts => AccountsImpl ?? Enumerable.Empty<ServerAccountSettings>();
 
     public void Validate()
     {
@@ -95,15 +95,38 @@ public class ServerAccountSettings : IAccountSettings, IConfigSettable
     public List<string> Tags { get; set; } = new();
     public int? Rating { get; set; }
 
+    // Private field on purpose: ConfigLoaderTest.VerifyProperties reflects over every public
+    // property and asserts an exact value per type, so a public marker would break those tests.
+    private bool _apiKeyResolvedFromFile;
+
+    /// <summary>
+    /// True when <see cref="ApiKey"/> holds the contents of <see cref="ApiKeyFile"/> rather than a
+    /// literal key from the config. The write path uses this to avoid persisting the resolved secret.
+    /// </summary>
+    [JsonIgnore]
+    [YamlIgnore]
+    internal bool ApiKeyResolvedFromFile => _apiKeyResolvedFromFile;
+
+    /// <summary>
+    /// Carries the resolved-from-file state across a copy. Without this, cloning an account whose key
+    /// came from <see cref="ApiKeyFile"/> would produce an object that looks like it has both a
+    /// literal key and a key file — which the writer would persist in plaintext and which would fail
+    /// validation on the next load.
+    /// </summary>
+    internal void MarkApiKeyResolvedFromFile() => _apiKeyResolvedFromFile = true;
+
     public void ValidateAndInitialize()
     {
-        if (!string.IsNullOrWhiteSpace(ApiKeyFile))
+        // Idempotent: after the first call both ApiKey and ApiKeyFile are populated, so re-running
+        // this (which IServerSettings.Validate() does) must not report them as a conflict.
+        if (!string.IsNullOrWhiteSpace(ApiKeyFile) && !_apiKeyResolvedFromFile)
         {
             if (!string.IsNullOrWhiteSpace(ApiKey))
             {
                 throw new Exception("Cannot specify both ApiKey and ApiKeyFile. Please provide only one.");
             }
             ApiKey = File.ReadAllText(ApiKeyFile).Trim();
+            _apiKeyResolvedFromFile = true;
         }
 
         if (string.IsNullOrWhiteSpace(ApiKey))

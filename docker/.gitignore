@@ -1,3 +1,7 @@
 .env
 Settings.json
 Settings.yml
+
+# The settings writer keeps a .bak of the previous file next to it, and those hold
+# resolved API keys just like the originals do.
+*.bak

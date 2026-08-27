@@ -27,6 +27,12 @@ public class MultiImmichFrameLogicDelegate : IImmichFrameLogic
         _accountSelectionStrategy = strategyFactory(_accountToDelegate.Values.ToList());
     }
 
+    /// <summary>
+    /// The per-account logic instances backing this delegate, so a retired generation's accounts can
+    /// be released from <see cref="IAssetAccountTracker"/> after a reload.
+    /// </summary>
+    public IReadOnlyCollection<IAccountImmichFrameLogic> AccountLogics => _accountToDelegate.Values;
+
     public async Task<AssetResponseDto?> GetNextAsset() => (await _accountSelectionStrategy.GetNextAsset())?.ToAsset();
 
 

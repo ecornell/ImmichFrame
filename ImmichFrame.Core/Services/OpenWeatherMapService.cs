@@ -1,14 +1,23 @@
 using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 
-public class OpenWeatherMapService : IWeatherService
+public class OpenWeatherMapService : IWeatherService, ISettingsResettable
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+
     private readonly IGeneralSettings _settings;
-    private readonly IApiCache _weatherCache = new ApiCache(TimeSpan.FromMinutes(5));
+    private IApiCache _weatherCache = new ApiCache(CacheDuration);
     public OpenWeatherMapService(IGeneralSettings settings)
     {
         _settings = settings;
     }
+
+    /// <summary>
+    /// Drops cached weather so a changed API key, location or unit system is reflected immediately
+    /// rather than up to <see cref="CacheDuration"/> later. <see cref="IApiCache"/> exposes no
+    /// removal API, so the cache is replaced wholesale.
+    /// </summary>
+    public void ResetCaches() => _weatherCache = new ApiCache(CacheDuration);
 
     public async Task<IWeather?> GetWeather()
     {

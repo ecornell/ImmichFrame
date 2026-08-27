@@ -443,6 +443,24 @@
 		}
 	}
 
+	// Re-applies the theme whenever the config changes, so colours saved from the settings page
+	// restyle the running frame instead of waiting for a reload. onMount below still applies these
+	// once on load; that duplicate is deliberate — leaving its block untouched keeps this file's
+	// diff against upstream purely additive, and it is the most frequently changed file in the repo.
+	$effect(() => {
+		if ($configStore.primaryColor) {
+			document.documentElement.style.setProperty('--primary-color', $configStore.primaryColor);
+		}
+
+		if ($configStore.secondaryColor) {
+			document.documentElement.style.setProperty('--secondary-color', $configStore.secondaryColor);
+		}
+
+		if ($configStore.baseFontSize) {
+			document.documentElement.style.fontSize = $configStore.baseFontSize;
+		}
+	});
+
 	onMount(() => {
 		window.addEventListener('mousemove', showCursor);
 		window.addEventListener('click', showCursor);

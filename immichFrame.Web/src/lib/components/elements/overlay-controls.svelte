@@ -4,8 +4,10 @@
 		mdiPlay,
 		mdiPause,
 		mdiChevronLeft,
-		mdiInformationOutline
+		mdiInformationOutline,
+		mdiCog
 	} from '@mdi/js';
+	import { resolve } from '$app/paths';
 	import Icon from './icon.svelte';
 	import { ProgressBarStatus } from './progress-bar.types';
 
@@ -106,8 +108,20 @@
 				</button>
 			</div>
 
-			<div class="group grid place-items-center">
-				<!-- <button class="opacity-0 hover:opacity-100 text-primary"> </button> -->
+			<div id="overlaysettings" class="group grid place-items-center">
+				<!-- Deliberately smaller than the playback controls: those are primary touch targets on
+				a frame, this is an occasional admin action. -->
+				<a
+					class="text-primary opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+					href={resolve('/settings')}
+				>
+					<Icon
+						title="Settings"
+						class="h-[12vh] max-h-[min(4rem,12vh)] w-[12vw] max-w-[min(4rem,12vh)]"
+						path={mdiCog}
+						size=""
+					/>
+				</a>
 			</div>
 		</div>
 

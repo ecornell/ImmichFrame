@@ -36,6 +36,14 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
         return FilterBuilder.Build(await account.GetTotalAssets());
     }
 
+    public void Forget(IEnumerable<IAccountImmichFrameLogic> accounts)
+    {
+        foreach (var account in accounts)
+        {
+            logicToFilter.TryRemove(account, out _);
+        }
+    }
+
     public T ForAsset<T>(Guid assetId, Func<IAccountImmichFrameLogic, T> f)
     {
         foreach (var entry in logicToFilter)

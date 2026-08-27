@@ -6,12 +6,20 @@ using ImmichFrame.Core.Interfaces;
 using ImmichFrame.WebApi.Helpers;
 using Microsoft.Extensions.Logging;
 
-public class IcalCalendarService : ICalendarService
+public class IcalCalendarService : ICalendarService, ISettingsResettable
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(15);
+
     private readonly IGeneralSettings _serverSettings;
     private readonly ILogger<IcalCalendarService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ApiCache _appointmentCache = new(TimeSpan.FromMinutes(15));
+    private ApiCache _appointmentCache = new(CacheDuration);
+
+    /// <summary>
+    /// Drops cached appointments so an edited Webcalendars list takes effect immediately rather than
+    /// up to <see cref="CacheDuration"/> later.
+    /// </summary>
+    public void ResetCaches() => _appointmentCache = new ApiCache(CacheDuration);
 
     public IcalCalendarService(IGeneralSettings serverSettings, ILogger<IcalCalendarService> logger, IHttpClientFactory httpClientFactory)
     {
