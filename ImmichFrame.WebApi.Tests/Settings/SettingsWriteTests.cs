@@ -167,6 +167,65 @@ public class SettingsWriteTests
     }
 
     [Test]
+    public void Save_ChangedServerWithoutNewApiKey_DoesNotReuseExistingCredential()
+    {
+        var current = SettingsWith(new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKey = "existing-key"
+        });
+
+        var update = new AdminSettingsUpdateDto
+        {
+            Version = 1,
+            General = new AdminGeneralSettingsDto(),
+            Accounts =
+            [
+                new AdminAccountUpdateDto
+                {
+                    Index = 0,
+                    ImmichServerUrl = "http://attacker.example.com:2283"
+                }
+            ]
+        };
+
+        var candidate = AdminSettingsMapper.Apply(update, current);
+
+        candidate.AccountsImpl.Single().ApiKey.Should().BeEmpty();
+        candidate.AccountsImpl.Single().ApiKeyFile.Should().BeNull();
+        SettingsValidator.TryValidate(candidate, out var problems).Should().BeFalse();
+        problems.Should().Contain(p => p.Contains("ApiKey or ApiKeyFile"));
+    }
+
+    [Test]
+    public void Save_TrailingSlashOnlyChange_KeepsTheExistingCredential()
+    {
+        var current = SettingsWith(new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283/",
+            ApiKey = "existing-key"
+        });
+
+        var update = new AdminSettingsUpdateDto
+        {
+            Version = 1,
+            General = new AdminGeneralSettingsDto(),
+            Accounts =
+            [
+                new AdminAccountUpdateDto
+                {
+                    Index = 0,
+                    ImmichServerUrl = "http://immich.example.com:2283"
+                }
+            ]
+        };
+
+        var candidate = AdminSettingsMapper.Apply(update, current);
+
+        candidate.AccountsImpl.Single().ApiKey.Should().Be("existing-key");
+    }
+
+    [Test]
     public void Save_WithNewApiKey_ReplacesItAndDropsTheKeyFile()
     {
         var current = SettingsWith(new ServerAccountSettings

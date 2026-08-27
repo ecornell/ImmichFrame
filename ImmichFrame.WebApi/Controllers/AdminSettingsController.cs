@@ -77,9 +77,20 @@ public class AdminSettingsController(
 
         if (string.IsNullOrWhiteSpace(apiKey) && dto.Index is { } index)
         {
-            // Same presence semantics as a save: no key on the wire means "use the configured one",
-            // which is the only way to browse for an account whose key came from ApiKeyFile.
-            apiKey = store.Current.Settings.Accounts.ElementAtOrDefault(index)?.ApiKey;
+            var existing = store.Current.Settings.Accounts.ElementAtOrDefault(index);
+            if (existing is null ||
+                !AdminSettingsMapper.SameServerUrl(dto.ImmichServerUrl, existing.ImmichServerUrl))
+            {
+                return BadRequest(new AdminBrowseResultDto
+                {
+                    Reachable = false,
+                    Error = "A new API key is required when the Immich server URL changes."
+                });
+            }
+
+            // No key on the wire means "use the configured one" only while the URL is unchanged.
+            // This is also how an account backed by ApiKeyFile can browse without exposing its key.
+            apiKey = existing.ApiKey;
         }
 
         var result = await catalog.Browse(dto.ImmichServerUrl, apiKey ?? string.Empty, ct);

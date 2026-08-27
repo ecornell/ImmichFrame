@@ -91,7 +91,18 @@ public static class AdminSettingsMapper
             Rating = dto.Rating
         };
 
-        if (dto.ApiKey is null)
+        var serverChanged = existing is not null &&
+                            !SameServerUrl(dto.ImmichServerUrl, existing.ImmichServerUrl);
+
+        if (serverChanged && string.IsNullOrWhiteSpace(dto.ApiKey))
+        {
+            // Never pair a retained or file-backed credential with a caller-supplied server.
+            // Probing that candidate would disclose the key to the new URL. The validator will
+            // require an explicit non-empty replacement key.
+            account.ApiKey = string.Empty;
+            account.ApiKeyFile = null;
+        }
+        else if (dto.ApiKey is null)
         {
             // Untouched by the form: keep whatever the account already had, including the
             // resolved-from-file state so the writer still knows not to persist the secret.
@@ -120,6 +131,14 @@ public static class AdminSettingsMapper
 
         return account;
     }
+
+    /// <summary>
+    /// Compares configured server URLs conservatively. A trailing slash is insignificant, but any
+    /// other textual change requires an explicit replacement credential.
+    /// </summary>
+    public static bool SameServerUrl(string? left, string? right) =>
+        string.Equals(left?.Trim().TrimEnd('/'), right?.Trim().TrimEnd('/'),
+            StringComparison.OrdinalIgnoreCase);
 
     public static AdminSettingsViewDto ToView(SettingsGeneration generation, ConfigLocation location, List<string> warnings)
     {
