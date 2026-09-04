@@ -32,7 +32,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
         _showHistory = showHistory ?? new AssetShowHistory();
         _downloadLocation = downloadLocation;
 
-        var httpClient = httpClientFactory.CreateClient("ImmichApiAccountClient");
+        var httpClient = httpClientFactory.CreateClient(ImmichApiHttpClientExtensions.ImmichApiAccountClient);
         AccountSettings = accountSettings;
 
         httpClient.UseApiKey(accountSettings.ApiKey);

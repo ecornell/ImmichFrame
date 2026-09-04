@@ -45,7 +45,7 @@ public sealed class ImmichCatalogBrowser(
 
         try
         {
-            var httpClient = httpClientFactory.CreateClient("ImmichApiAccountClient");
+            var httpClient = httpClientFactory.CreateClient(ImmichApiHttpClientExtensions.ImmichApiAccountClient);
             httpClient.UseApiKey(apiKey);
             var immichApi = new ImmichApi(serverUrl, httpClient);
 
