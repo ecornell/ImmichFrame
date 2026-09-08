@@ -1,6 +1,7 @@
 // ImmichFrame.Core/Helpers/AssetHelper.cs
 using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Interfaces;
+using ImmichFrame.Core.Logic.Pool;
 
 namespace ImmichFrame.Core.Helpers;
 
@@ -13,27 +14,23 @@ public static class AssetHelper
         foreach (var albumId in accountSettings?.ExcludedAlbums ?? new())
         {
             int page = 1;
-            int batchSize = 1000;
-            int itemsInPage;
-            do
+            while (true)
             {
                 var metadataBody = new MetadataSearchDto
                 {
                     Page = page,
-                    Size = batchSize,
+                    Size = SearchAssetPagination.PageSize,
                     AlbumIds = [albumId]
                 };
                 var searchResponse = await immichApi.SearchAssetsAsync(null, null, metadataBody, ct);
 
-                itemsInPage = searchResponse.Assets?.Items.Count ?? 0;
+                if (searchResponse.Assets == null) break;
 
-                if (searchResponse.Assets != null)
-                {
-                    excludedAlbumAssets.AddRange(searchResponse.Assets.Items);
-                }
-
-                page++;
-            } while (itemsInPage == batchSize);
+                excludedAlbumAssets.AddRange(searchResponse.Assets.Items);
+                var nextPage = SearchAssetPagination.NextPage(searchResponse.Assets, page);
+                if (!nextPage.HasValue) break;
+                page = nextPage.Value;
+            }
         }
 
         return excludedAlbumAssets;

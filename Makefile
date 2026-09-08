@@ -10,6 +10,11 @@ test-webapi:
 test-core:
 	dotnet test ./ImmichFrame.Core.Tests/ImmichFrame.Core.Tests.csproj
 
+test-ops:
+	bash -n scripts/*.sh scripts/tests/*.sh
+	bash scripts/tests/smoke-prod-test.sh
+	bash scripts/tests/deploy-prod-test.sh
+
 docs:
 	npm --prefix docs run start
 

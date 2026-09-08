@@ -15,6 +15,13 @@
 	import { page } from '$app/state';
 	import { ProgressBarLocation, ProgressBarStatus } from '../elements/progress-bar.types';
 	import { isImageAsset, isVideoAsset } from '$lib/constants/asset-type';
+	import {
+		assetPromiseKeysToRemove,
+		ConsecutiveMediaFailures,
+		fatalMediaErrorAfterCandidate,
+		transitionIsCurrent,
+		withObjectUrlCleanup
+	} from '$lib/recovery';
 
 	interface AssetsState {
 		assets: [string, api.AssetResponseDto, api.AssetFaceResponseDto[], api.AlbumResponseDto[]][];
@@ -30,7 +37,7 @@
 	const TRANSITION_WATCHDOG_MS = 10000;
 	const VIDEO_STALL_MS = 15000;
 	const CURSOR_HIDE_MS = 2000;
-	const RELOAD_ON_ERROR_MS = 30000;
+	const RETRY_ON_ERROR_MS = 5000;
 	const MAX_ASSET_HISTORY = 250;
 	const MAX_RECENT_ASSETS = 1000;
 	const ASSET_REQUEST_ATTEMPTS = 4;
@@ -49,15 +56,18 @@
 	let assetComponent: AssetComponentInstance = $state() as AssetComponentInstance;
 	let currentDuration: number = $state($configStore.interval ?? 20);
 
-	let consecutiveErrorSkips = 0;
+	const mediaFailures = new ConsecutiveMediaFailures();
 	let errorSkipScheduled = false;
 	let watchdogTimer: number | undefined;
+	let activeTransitionController: AbortController | undefined;
 	let videoStallTimeout: number | undefined;
 	let timeoutId: number | undefined;
 
 	let userPaused: boolean = $state(false);
 
 	let error: boolean = $state(false);
+	let fatalMediaError: boolean = $state(false);
+	let offline: boolean = $state(false);
 	let infoVisible: boolean = $state(false);
 	let authError: boolean = $state(false);
 	let errorMessage: string = $state('');
@@ -72,10 +82,11 @@
 		string,
 		Promise<[string, api.AssetResponseDto, api.AssetFaceResponseDto[], api.AlbumResponseDto[]]>
 	> = {};
+	let assetPromiseControllers: Record<string, AbortController> = {};
 
 	let unsubscribeRestart: () => void;
 	let unsubscribeStop: () => void;
-	let refreshInterval: number;
+	let retryInterval: number;
 
 	let cursorVisible = $state(true);
 
@@ -105,29 +116,46 @@
 		timeoutId = window.setTimeout(hideCursor, CURSOR_HIDE_MS);
 	};
 
-	async function updateAssetPromises() {
-		for (let asset of displayingAssets) {
+	async function updateAssetPromises(
+		visibleAssets = displayingAssets,
+		backlog = assetBacklog,
+		signal?: AbortSignal
+	) {
+		const ensurePromise = (asset: api.AssetResponseDto, cancelWithTransition: boolean) => {
+			let controller = assetPromiseControllers[asset.id];
 			if (!(asset.id in assetPromisesDict)) {
-				assetPromisesDict[asset.id] = loadAsset(asset);
+				controller = new AbortController();
+				assetPromiseControllers[asset.id] = controller;
+				const promise = loadAsset(asset, controller.signal);
+				assetPromisesDict[asset.id] = promise;
+				promise.catch(() => {
+					if (assetPromisesDict[asset.id] === promise) {
+						delete assetPromisesDict[asset.id];
+						delete assetPromiseControllers[asset.id];
+					}
+				});
 			}
-		}
-		for (let i = 0; i < PRELOAD_ASSETS; i++) {
-			if (i >= assetBacklog.length) {
-				break;
+			if (cancelWithTransition && signal) {
+				signal.addEventListener('abort', () => controller?.abort(), { once: true });
 			}
-			if (!(assetBacklog[i].id in assetPromisesDict)) {
-				assetPromisesDict[assetBacklog[i].id] = loadAsset(assetBacklog[i]);
-			}
+		};
+
+		for (let asset of visibleAssets) ensurePromise(asset, true);
+		for (let i = 0; i < Math.min(PRELOAD_ASSETS, backlog.length); i++) {
+			ensurePromise(backlog[i], false);
 		}
 		// Collect keys to remove first to avoid modifying dict during async iteration
-		const keysToRemove = Object.keys(assetPromisesDict).filter(
-			(key) =>
-				!displayingAssets.find((item) => item.id === key) &&
-				!assetBacklog.find((item) => item.id === key)
+		const keysToRemove = assetPromiseKeysToRemove(
+			Object.keys(assetPromisesDict),
+			visibleAssets.map((asset) => asset.id),
+			backlog.map((asset) => asset.id),
+			displayingAssets.map((asset) => asset.id)
 		);
 
 		keysToRemove.forEach((key) => {
 			const promise = assetPromisesDict[key];
+			assetPromiseControllers[key]?.abort();
+			delete assetPromiseControllers[key];
 			delete assetPromisesDict[key];
 			promise
 				.then(([url]) => revokeObjectUrl(url))
@@ -171,8 +199,10 @@
 		}
 	}
 
-	async function loadAssets() {
+	async function loadAssets(signal: AbortSignal, epoch: number) {
 		try {
+			// This request-local map is never rendered and does not need reactive instrumentation.
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity
 			const candidates = new Map<string, api.AssetResponseDto>();
 			const recentAssetKeysSet = new Set([
 				...recentAssetKeys,
@@ -181,14 +211,17 @@
 			]);
 
 			for (let attempt = 0; attempt < ASSET_REQUEST_ATTEMPTS; attempt++) {
-				const assetRequest = await api.getAssets({ clientIdentifier: $clientIdentifierStore });
+				const assetRequest = await api.getAssets(
+					{ clientIdentifier: $clientIdentifierStore },
+					{ signal }
+				);
 
 				if (assetRequest.status != 200) {
-					if (assetRequest.status == 401) {
-						authError = true;
+					if (transitionIsCurrent(epoch, transitionEpoch, signal)) {
+						authError = assetRequest.status == 401;
+						markConnectionUnavailable();
 					}
-					error = true;
-					return;
+					return false;
 				}
 
 				for (const asset of assetRequest.data) {
@@ -204,7 +237,7 @@
 				if (unseenCount >= PRELOAD_ASSETS) break;
 			}
 
-			error = false;
+			if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return false;
 			const uniqueAssets = [...candidates.values()];
 			const unseenAssets = uniqueAssets.filter(
 				(asset) => !recentAssetKeysSet.has(assetHistoryKey(asset))
@@ -218,13 +251,21 @@
 				const recency = new Map(recentAssetKeys.map((key, index) => [key, index]));
 				assetBacklog = [...uniqueAssets].sort(
 					(a, b) =>
-						(recency.get(assetHistoryKey(a)) ?? -1) -
-						(recency.get(assetHistoryKey(b)) ?? -1)
+						(recency.get(assetHistoryKey(a)) ?? -1) - (recency.get(assetHistoryKey(b)) ?? -1)
 				);
 			}
-		} catch {
-			error = true;
+			return true;
+		} catch (caught) {
+			if (transitionIsCurrent(epoch, transitionEpoch, signal)) markConnectionUnavailable();
+			if (caught instanceof DOMException && caught.name === 'AbortError') return false;
+			return false;
 		}
+	}
+
+	function markConnectionUnavailable() {
+		errorMessage = 'Connection unavailable. Retrying while the last photo remains displayed.';
+		if (assetsState.loaded) offline = true;
+		else error = true;
 	}
 
 	let isHandlingAssetTransition = $state(false);
@@ -238,25 +279,18 @@
 		}
 
 		const currentEpoch = ++transitionEpoch;
+		const controller = new AbortController();
+		activeTransitionController = controller;
 		isHandlingAssetTransition = true;
 
 		clearTimeout(watchdogTimer);
 		clearTimeout(videoStallTimeout);
-		// Watchdog: If the transition (fetching/loading assets) hangs, force-release the lock.
 		watchdogTimer = window.setTimeout(() => {
-			if (currentEpoch === transitionEpoch && isHandlingAssetTransition) {
-				console.error('Transition watchdog triggered: Force-resetting lock due to hang');
-				isHandlingAssetTransition = false;
-
-				// Bump the epoch so the original (still-awaiting) transition becomes a no-op
-				// when/if it eventually resolves, and force a fresh advance.
-				transitionEpoch++;
-				const next = pendingTransition ?? { previous: false, instant: true };
-				pendingTransition = null;
-				handleDone(next.previous, next.instant).catch((err) => {
-					console.error('handleDone failed:', err);
-					isHandlingAssetTransition = false;
-				});
+			if (transitionIsCurrent(currentEpoch, transitionEpoch, controller.signal)) {
+				console.error('Transition watchdog triggered: aborting stalled requests');
+				markConnectionUnavailable();
+				pendingTransition ??= { previous: false, instant: true };
+				controller.abort();
 			}
 		}, TRANSITION_WATCHDOG_MS);
 
@@ -264,76 +298,96 @@
 			userPaused = false;
 			progressBar.restart(false);
 			$instantTransition = instant;
-			if (previous) await getPreviousAssets();
-			else await getNextAssets();
+			if (previous) await getPreviousAssets(currentEpoch, controller.signal);
+			else await getNextAssets(currentEpoch, controller.signal);
+			if (!transitionIsCurrent(currentEpoch, transitionEpoch, controller.signal)) return;
+
 			await tick();
-
-			if (currentEpoch !== transitionEpoch) return;
-
 			await assetComponent?.play?.();
-			progressBar.play();
-			consecutiveErrorSkips = 0;
+			await progressBar.play();
+		} catch (caught) {
+			if (!(caught instanceof DOMException && caught.name === 'AbortError')) {
+				console.error('Asset transition failed:', caught);
+				if (transitionIsCurrent(currentEpoch, transitionEpoch, controller.signal)) {
+					markConnectionUnavailable();
+				}
+			}
 		} finally {
 			if (currentEpoch === transitionEpoch) {
 				isHandlingAssetTransition = false;
+				activeTransitionController = undefined;
 				clearTimeout(watchdogTimer);
 
 				if (pendingTransition) {
 					const next = pendingTransition;
 					pendingTransition = null;
-					handleDone(next.previous, next.instant).catch((err) => {
-						console.error('handleDone failed:', err);
-						isHandlingAssetTransition = false;
-					});
+					handleDone(next.previous, next.instant).catch((caught) =>
+						console.error('handleDone failed:', caught)
+					);
 				}
 			}
 		}
 	};
 
-	async function getNextAssets() {
-		if (!assetBacklog.length) {
-			await loadAssets();
-		}
+	async function getNextAssets(epoch: number, signal: AbortSignal) {
+		if (!assetBacklog.length && !(await loadAssets(signal, epoch))) return;
+		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
 
-		if (!error && !assetBacklog.length) {
+		if (!assetBacklog.length) {
 			error = true;
 			errorMessage = 'No assets were found! Check your configuration.';
 			return;
 		}
 
 		const useSplit = shouldUseSplitView(assetBacklog);
-		const next = assetBacklog.splice(0, useSplit ? 2 : 1);
+		const count = useSplit ? 2 : 1;
+		const next = assetBacklog.slice(0, count);
+		const nextBacklog = assetBacklog.slice(count);
+		let nextHistory = displayingAssets.length
+			? [...assetHistory, ...displayingAssets]
+			: [...assetHistory];
+		nextHistory = nextHistory.slice(-MAX_ASSET_HISTORY);
 
-		if (displayingAssets.length) {
-			assetHistory.push(...displayingAssets);
-		}
-
-		if (assetHistory.length > MAX_ASSET_HISTORY) {
-			assetHistory = assetHistory.slice(-MAX_ASSET_HISTORY);
-		}
-
-		displayingAssets = next;
-		await updateAssetPromises();
-		assetsState = await pickAssets(next);
-		if (assetsState.loaded) recordRecentAssets(next);
-	}
-
-	async function getPreviousAssets() {
-		if (!assetHistory.length) {
+		await updateAssetPromises(next, nextBacklog, signal);
+		const nextState = await pickAssets(next);
+		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
+		if (!nextState.loaded) {
+			markConnectionUnavailable();
 			return;
 		}
 
-		const useSplit = shouldUseSplitView(assetHistory.slice(-2));
-		const next = assetHistory.splice(useSplit ? -2 : -1);
-
-		if (displayingAssets.length) {
-			assetBacklog.unshift(...displayingAssets);
-		}
-
+		assetBacklog = nextBacklog;
+		assetHistory = nextHistory;
 		displayingAssets = next;
-		await updateAssetPromises();
-		assetsState = await pickAssets(next);
-		if (assetsState.loaded) recordRecentAssets(next);
+		assetsState = nextState;
+		fatalMediaError = fatalMediaErrorAfterCandidate(fatalMediaError, nextState.loaded);
+		error = false;
+		offline = false;
+		authError = false;
+		recordRecentAssets(next);
+	}
+
+	async function getPreviousAssets(epoch: number, signal: AbortSignal) {
+		if (!assetHistory.length) return;
+
+		const useSplit = shouldUseSplitView(assetHistory.slice(-2));
+		const count = useSplit ? 2 : 1;
+		const next = assetHistory.slice(-count);
+		const nextHistory = assetHistory.slice(0, -count);
+		const nextBacklog = displayingAssets.length
+			? [...displayingAssets, ...assetBacklog]
+			: [...assetBacklog];
+
+		await updateAssetPromises(next, nextBacklog, signal);
+		const nextState = await pickAssets(next);
+		if (!transitionIsCurrent(epoch, transitionEpoch, signal) || !nextState.loaded) return;
+
+		assetHistory = nextHistory;
+		assetBacklog = nextBacklog;
+		displayingAssets = next;
+		assetsState = nextState;
+		fatalMediaError = fatalMediaErrorAfterCandidate(fatalMediaError, nextState.loaded);
+		recordRecentAssets(next);
 	}
 
 	function isPortrait(asset: api.AssetResponseDto) {
@@ -408,8 +462,9 @@
 		try {
 			updateCurrentDuration(assets);
 			for (let asset of assets) {
-				let img = await assetPromisesDict[asset.id];
-				newAssets.push(img);
+				const promise = assetPromisesDict[asset.id];
+				if (!promise) throw new Error(`Missing preload promise for asset ${asset.id}`);
+				newAssets.push(await promise);
 			}
 			return {
 				assets: newAssets,
@@ -430,7 +485,7 @@
 		}
 	}
 
-	async function loadAsset(assetResponse: api.AssetResponseDto) {
+	async function loadAsset(assetResponse: api.AssetResponseDto, signal?: AbortSignal) {
 		let assetUrl: string;
 
 		if (isVideoAsset(assetResponse)) {
@@ -442,46 +497,62 @@
 			);
 		} else {
 			// Preload images as blobs
-			const req = await api.getAsset(assetResponse.id, {
-				clientIdentifier: $clientIdentifierStore,
-				assetType: assetResponse.type
-			});
+			const req = await api.getAsset(
+				assetResponse.id,
+				{
+					clientIdentifier: $clientIdentifierStore,
+					assetType: assetResponse.type
+				},
+				{ signal }
+			);
 			if (req.status != 200) {
 				throw new Error(`Failed to load asset ${assetResponse.id}: status ${req.status}`);
 			}
 			assetUrl = getObjectUrl(req.data);
 		}
 
-		let album: api.AlbumResponseDto[] | null = null;
-		if ($configStore.showAlbumName) {
-			const albumReq = await api.getAlbumInfo(assetResponse.id, {
-				clientIdentifier: $clientIdentifierStore
-			});
-			album = albumReq.data ?? [];
-		}
+		return withObjectUrlCleanup(
+			assetUrl,
+			async () => {
+				let album: api.AlbumResponseDto[] | null = null;
+				if ($configStore.showAlbumName) {
+					const albumReq = await api.getAlbumInfo(
+						assetResponse.id,
+						{ clientIdentifier: $clientIdentifierStore },
+						{ signal }
+					);
+					album = albumReq.data ?? [];
+				}
 
-		// if the people array is already populated, there is no need to call the API again
-		if ($configStore.showPeopleDesc && (assetResponse.people ?? []).length == 0) {
-			const assetInfoRequest = await api.getAssetInfo(assetResponse.id, {
-				clientIdentifier: $clientIdentifierStore
-			});
-			assetResponse.people = assetInfoRequest.data.people;
-		}
+				// if the people array is already populated, there is no need to call the API again
+				if ($configStore.showPeopleDesc && (assetResponse.people ?? []).length == 0) {
+					const assetInfoRequest = await api.getAssetInfo(
+						assetResponse.id,
+						{ clientIdentifier: $clientIdentifierStore },
+						{ signal }
+					);
+					assetResponse.people = assetInfoRequest.data.people;
+				}
 
-		let faces: api.AssetFaceResponseDto[] = [];
-		if (!isVideoAsset(assetResponse) && ($configStore.imageZoom || $configStore.imagePan)) {
-			const facesRequest = await api.getAssetFaces(assetResponse.id, {
-				clientIdentifier: $clientIdentifierStore
-			});
-			faces = facesRequest.data;
-		}
+				let faces: api.AssetFaceResponseDto[] = [];
+				if (!isVideoAsset(assetResponse) && ($configStore.imageZoom || $configStore.imagePan)) {
+					const facesRequest = await api.getAssetFaces(
+						assetResponse.id,
+						{ clientIdentifier: $clientIdentifierStore },
+						{ signal }
+					);
+					faces = facesRequest.data;
+				}
 
-		return [assetUrl, assetResponse, faces, album] as [
-			string,
-			api.AssetResponseDto,
-			api.AssetFaceResponseDto[],
-			api.AlbumResponseDto[]
-		];
+				return [assetUrl, assetResponse, faces, album] as [
+					string,
+					api.AssetResponseDto,
+					api.AssetFaceResponseDto[],
+					api.AlbumResponseDto[]
+				];
+			},
+			revokeObjectUrl
+		);
 	}
 
 	function getObjectUrl(image: Blob) {
@@ -520,10 +591,14 @@
 		window.addEventListener('mousemove', showCursor);
 		window.addEventListener('click', showCursor);
 
-		// 30 second reload on error
-		refreshInterval = window.setInterval(() => {
-			if (error) window.location.reload();
-		}, RELOAD_ON_ERROR_MS);
+		// Retry API work in place so an outage does not discard the last rendered photo.
+		retryInterval = window.setInterval(() => {
+			if ((error || offline) && !authError && !isHandlingAssetTransition) {
+				handleDone(false, true).catch((caught) =>
+					console.error('Recovery transition failed:', caught)
+				);
+			}
+		}, RETRY_ON_ERROR_MS);
 
 		if ($configStore.primaryColor) {
 			document.documentElement.style.setProperty('--primary-color', $configStore.primaryColor);
@@ -551,15 +626,16 @@
 			}
 		});
 
-		getNextAssets();
+		handleDone();
 
 		return () => {
 			window.removeEventListener('mousemove', showCursor);
 			window.removeEventListener('click', showCursor);
-			window.clearInterval(refreshInterval);
+			window.clearInterval(retryInterval);
 			window.clearTimeout(timeoutId);
 			window.clearTimeout(videoStallTimeout);
 			window.clearTimeout(watchdogTimer);
+			activeTransitionController?.abort();
 		};
 	});
 
@@ -572,6 +648,7 @@
 			unsubscribeStop();
 		}
 
+		Object.values(assetPromiseControllers).forEach((controller) => controller.abort());
 		const revokes = Object.values(assetPromisesDict).map(async (p) => {
 			try {
 				const [url] = await p;
@@ -582,13 +659,14 @@
 		});
 		await Promise.allSettled(revokes);
 		assetPromisesDict = {};
+		assetPromiseControllers = {};
 	});
 </script>
 
 <section class="fixed grid h-dvh-safe w-screen bg-black" class:cursor-none={!cursorVisible}>
-	{#if error}
+	{#if fatalMediaError || (error && !assetsState.loaded)}
 		<ErrorElement {authError} message={errorMessage} />
-	{:else if displayingAssets}
+	{:else if assetsState.loaded}
 		<div class="absolute h-screen w-screen">
 			<AssetComponent
 				showLocation={$configStore.showImageLocation}
@@ -621,19 +699,24 @@
 					);
 				}}
 				onVideoPlaying={async () => {
-					consecutiveErrorSkips = 0;
+					mediaFailures.succeeded();
+					fatalMediaError = false;
 					clearTimeout(videoStallTimeout);
 					if (!userPaused) {
 						await progressBar.play();
 					}
 				}}
+				onAssetLoaded={() => {
+					mediaFailures.succeeded();
+					fatalMediaError = false;
+				}}
 				onAssetError={async () => {
 					if (errorSkipScheduled) return;
 					errorSkipScheduled = true;
 
-					consecutiveErrorSkips++;
-					if (consecutiveErrorSkips > 10) {
+					if (mediaFailures.failed() > 10) {
 						error = true;
+						fatalMediaError = true;
 						errorMessage =
 							'Too many consecutive asset load failures. Please check your network or server connection.';
 						errorSkipScheduled = false;
@@ -645,6 +728,12 @@
 				}}
 			/>
 		</div>
+
+		{#if offline}
+			<div class="absolute right-4 top-4 z-[1001] rounded bg-black/70 px-3 py-2 text-white">
+				Offline — retrying
+			</div>
+		{/if}
 
 		{#if $configStore.showClock}
 			<Clock />

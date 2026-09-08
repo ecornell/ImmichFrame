@@ -160,6 +160,8 @@ namespace ImmichFrame.WebApi.Controllers
             _ = _logic.SendWebhookNotification(notification);
 
             string randomImageBase64;
+            using (asset.Owner)
+            await using (asset.FileStream)
             using (var memoryStream = new MemoryStream())
             {
                 await asset.FileStream.CopyToAsync(memoryStream);

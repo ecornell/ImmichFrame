@@ -67,6 +67,44 @@ public class AlbumAssetsPoolTests
     }
 
     [Test]
+    public async Task LoadAssets_FollowsNextPageForIncludedAndExcludedAlbums()
+    {
+        var includedAlbumId = Guid.NewGuid();
+        var excludedAlbumId = Guid.NewGuid();
+        var keep = CreateAsset("keep");
+        var remove = CreateAsset("remove");
+        _mockAccountSettings.SetupGet(s => s.Albums).Returns([includedAlbumId]);
+        _mockAccountSettings.SetupGet(s => s.ExcludedAlbums).Returns([excludedAlbumId]);
+
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.Is<MetadataSearchDto>(d => d.AlbumIds.Contains(includedAlbumId) && d.Page == 1),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto
+                { Items = [keep], Total = 2, NextPage = "2" } });
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.Is<MetadataSearchDto>(d => d.AlbumIds.Contains(includedAlbumId) && d.Page == 2),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto
+                { Items = [remove], Total = 2 } });
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.Is<MetadataSearchDto>(d => d.AlbumIds.Contains(excludedAlbumId) && d.Page == 1),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto
+                { Items = [], Total = 1, NextPage = "2" } });
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.Is<MetadataSearchDto>(d => d.AlbumIds.Contains(excludedAlbumId) && d.Page == 2),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto
+                { Items = [remove], Total = 1 } });
+
+        var result = (await _albumAssetsPool.GetAssets(25)).ToList();
+
+        Assert.That(result.Select(asset => asset.Id), Is.EqualTo(new[] { keep.Id }));
+        _mockImmichApi.Verify(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.Is<MetadataSearchDto>(d => d.Page == 2), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Test]
     public async Task LoadAssets_NoIncludedAlbums_ReturnsEmpty()
     {
         _mockAccountSettings.SetupGet(s => s.Albums).Returns(new List<Guid>());

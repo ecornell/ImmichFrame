@@ -40,48 +40,77 @@ public sealed class SettingsFileWriter(ConfigLocation location, ILogger<Settings
         var target = location.SettingsJsonPath;
         var tmp = target + ".tmp";
         var bak = target + ".bak";
+        var backupTmp = bak + ".tmp";
 
         try
         {
-            File.WriteAllText(tmp, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-            using (var fs = new FileStream(tmp, FileMode.Open, FileAccess.ReadWrite))
+            DeleteIfExists(tmp);
+            DeleteIfExists(backupTmp);
+            WriteOwnerOnlyFile(tmp, stream =>
             {
-                fs.Flush(flushToDisk: true);
-            }
+                using var writer = new StreamWriter(stream,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true);
+                writer.Write(json);
+                writer.Flush();
+            });
 
             if (File.Exists(target))
             {
-                try
+                // Build and permission the backup before committing the new target. If backup
+                // preparation fails, Settings.json has not been changed.
+                WriteOwnerOnlyFile(backupTmp, stream =>
                 {
-                    File.Replace(tmp, target, bak, ignoreMetadataErrors: true);
-                }
-                catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or UnauthorizedAccessException)
-                {
-                    // File.Replace is unsupported on some bind-mounted filesystems (overlayfs, NFS,
-                    // SMB). A plain rename is still atomic there.
-                    logger.LogDebug(ex, "File.Replace unavailable, falling back to copy + move.");
-                    File.Copy(target, bak, overwrite: true);
-                    File.Move(tmp, target, overwrite: true);
-                }
+                    using var source = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    source.CopyTo(stream);
+                });
+                File.Move(backupTmp, bak, overwrite: true);
             }
-            else
-            {
-                File.Move(tmp, target);
-            }
+
+            // tmp lives beside the target, so this rename is atomic and carries its owner-only mode
+            // into place without a failure-prone chmod after the content commit.
+            File.Move(tmp, target, overwrite: true);
 
             logger.LogInformation("Settings written to {Path}", target);
         }
         finally
         {
-            try
-            {
-                if (File.Exists(tmp)) File.Delete(tmp);
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(ex, "Could not clean up temporary settings file {Path}", tmp);
-            }
+            TryDelete(tmp, logger);
+            TryDelete(backupTmp, logger);
+        }
+    }
+
+    private static void WriteOwnerOnlyFile(string path, Action<FileStream> write)
+    {
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        using var stream = new FileStream(path, options);
+        write(stream);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    private static void TryDelete(string path, ILogger logger)
+    {
+        try
+        {
+            DeleteIfExists(path);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not clean up temporary settings file {Path}", path);
         }
     }
 }

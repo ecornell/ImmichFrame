@@ -15,25 +15,23 @@ public class AlbumAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSe
             foreach (var albumId in albums)
             {
                 int page = 1;
-                int batchSize = 1000;
-                int itemsInPage;
-                do
+                while (true)
                 {
                     var metadataBody = new MetadataSearchDto
                     {
                         Page = page,
-                        Size = batchSize,
+                        Size = SearchAssetPagination.PageSize,
                         AlbumIds = [albumId],
                         WithExif = true,
                         WithPeople = true,
                     };
                     var searchResponse = await immichApi.SearchAssetsAsync(null, null, metadataBody, ct);
 
-                    itemsInPage = searchResponse.Assets.Items.Count;
-
                     albumAssets.AddRange(searchResponse.Assets.Items);
-                    page++;
-                } while (itemsInPage == batchSize);
+                    var nextPage = SearchAssetPagination.NextPage(searchResponse.Assets, page);
+                    if (!nextPage.HasValue) break;
+                    page = nextPage.Value;
+                }
             }
         }
 

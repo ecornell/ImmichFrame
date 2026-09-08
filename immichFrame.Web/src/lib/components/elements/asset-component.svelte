@@ -32,6 +32,7 @@
 		playAudio?: boolean;
 		onVideoWaiting?: () => void;
 		onVideoPlaying?: () => void;
+		onAssetLoaded?: () => void;
 		onAssetError?: () => void;
 	}
 
@@ -55,6 +56,7 @@
 		playAudio = false,
 		onVideoWaiting = () => {},
 		onVideoPlaying = () => {},
+		onAssetLoaded = () => {},
 		onAssetError = () => {}
 	}: Props = $props();
 	let instantTransition = slideshowStore.instantTransition;
@@ -121,6 +123,7 @@
 							{playAudio}
 							{onVideoWaiting}
 							{onVideoPlaying}
+							{onAssetLoaded}
 							{onAssetError}
 							bind:this={primaryAssetComponent}
 							bind:showInfo
@@ -143,6 +146,7 @@
 							{playAudio}
 							{onVideoWaiting}
 							{onVideoPlaying}
+							{onAssetLoaded}
 							{onAssetError}
 							bind:this={secondaryAssetComponent}
 							bind:showInfo
@@ -167,6 +171,7 @@
 						{playAudio}
 						{onVideoWaiting}
 						{onVideoPlaying}
+						{onAssetLoaded}
 						{onAssetError}
 						bind:this={primaryAssetComponent}
 						bind:showInfo

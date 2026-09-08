@@ -21,18 +21,31 @@ untracked changes by default so every production image can be reproduced. It:
    the server, excluding ignored, untracked, and machine-local files.
 3. Builds a candidate Docker image and automatically increments the deployed
    four-part version number.
-4. Tags the existing image for rollback.
+4. Verifies that the Compose service, current container, and current image exist,
+   then tags the running image for rollback.
 5. Recreates only the `immichframe` Compose service.
 6. Checks the service from both the server and the local machine, including the
-   `/settings` frontend route and the admin settings API.
-7. Automatically restores the previous image if startup or verification fails,
-   then verifies the restored image identity and internal/external readiness.
+   `/settings` frontend route, admin settings API, asset list, and an actual image download.
+7. Automatically restores the previous image after errors, termination, or failed
+   verification, then verifies the restored image identity and readiness.
 
 To set the version explicitly:
 
 ```bash
 VERSION=1.0.25.2 ./scripts/deploy-prod.sh
 ```
+
+Normal update mode intentionally refuses to continue when the container is absent. After
+confirming that `/opt/stacks/immich/compose.yaml`, its environment, configuration mounts,
+and the `immichframe` service are the intended desired state, bootstrap an empty host with:
+
+```bash
+BOOTSTRAP=1 VERSION=1.0.25.2 ./scripts/deploy-prod.sh
+```
+
+Bootstrap is explicit, requires a version, and refuses to replace an existing container. If the
+stable image tag already exists, bootstrap preserves it as the rollback image before replacing it;
+otherwise a failed bootstrap retains its uniquely tagged candidate for diagnosis or a safe retry.
 
 The image is labelled with the source revision. For an emergency change, create
 a temporary commit rather than bypassing the clean-tree check; that preserves an
@@ -56,8 +69,10 @@ Run the production checks without deploying:
 ```
 
 The check verifies the frame shell, confirms that the compiled Svelte manifest
-contains `/settings`, and validates that `GET /api/AdminSettings` returns a
-writable configuration without warnings. If authentication is enabled, pass the
+contains `/settings`, validates that `GET /api/AdminSettings` returns a writable
+configuration without warnings, fetches `GET /api/Asset`, and downloads one image
+through its media endpoint. This catches broken credentials and media proxying that
+shell-only checks cannot detect. If authentication is enabled, pass the
 secret without placing it on the command line or in Git:
 
 ```bash
@@ -84,3 +99,37 @@ curl -fsS -o /dev/null http://127.0.0.1:8080/
 
 Old `immichframe:rollback-*` images are intentionally retained until manually
 removed.
+
+## Opt-in health monitoring and durable recovery
+
+The repository does not install or activate monitoring. On a host where an operator has
+chosen to enable it, `scripts/check-compose-health.sh` verifies the Compose definition,
+container presence/running state, and local HTTP reachability. Set `ALERT_WEBHOOK_URL` to
+opt into a generic JSON webhook notification; leaving it unset only logs and exits nonzero.
+Schedule the command with the host's existing monitoring system or a systemd timer, and
+alert on any nonzero exit. Keep the Compose restart policy at `unless-stopped` so Docker
+restarts ordinary stopped processes; monitoring is still required because a restart policy
+cannot recreate a manually removed container.
+
+A local rollback tag is not durable against disk loss or `docker system prune -a`. After a
+verified deployment, create a checksummed archive and copy both files to operator-managed
+off-host storage:
+
+```bash
+sudo bash ./scripts/archive-image.sh save immichframe:custom /var/backups/immichframe/custom-$(date +%Y%m%d).tar.gz
+# copy the .tar.gz and .sha256 files off-host using your approved backup system
+```
+
+To recover an absent image, return both files to the host, verify/load them, restore the
+stable tag if necessary, and reconcile the pinned Compose definition:
+
+```bash
+sudo bash ./scripts/archive-image.sh restore /var/backups/immichframe/custom-YYYYMMDD.tar.gz
+docker tag <loaded-image-reference> immichframe:custom
+cd /opt/stacks/immich && docker compose up -d immichframe
+bash ./scripts/check-compose-health.sh
+```
+
+Do not run unrestricted image pruning until a verified off-host archive exists. The health
+and archive scripts are guidance/tools only: they do not provision services, schedule jobs,
+or transmit archives.

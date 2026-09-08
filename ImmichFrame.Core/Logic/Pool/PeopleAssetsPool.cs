@@ -18,14 +18,12 @@ public class PersonAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountS
         foreach (var personId in people)
         {
             int page = 1;
-            int batchSize = 1000;
-            long total;
-            do
+            while (true)
             {
                 var metadataBody = new MetadataSearchDto
                 {
                     Page = page,
-                    Size = batchSize,
+                    Size = SearchAssetPagination.PageSize,
                     PersonIds = [personId],
                     WithExif = true,
                     WithPeople = true
@@ -38,11 +36,11 @@ public class PersonAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountS
 
                 var personInfo = await immichApi.SearchAssetsAsync(null, null, metadataBody, ct);
 
-                total = personInfo.Assets.Total;
-
                 personAssets.AddRange(personInfo.Assets.Items);
-                page++;
-            } while (total == batchSize);
+                var nextPage = SearchAssetPagination.NextPage(personInfo.Assets, page);
+                if (!nextPage.HasValue) break;
+                page = nextPage.Value;
+            }
         }
 
         return personAssets;

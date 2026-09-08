@@ -33,8 +33,9 @@ public class TagAssetsPoolTests
 
     private static AssetResponseDto Asset(string id) => new() { Id = FixtureHelpers.GuidFor(id), Type = AssetTypeEnum.IMAGE };
 
-    private static SearchResponseDto SearchResult(List<AssetResponseDto> assets) =>
-        new() { Assets = new SearchAssetResponseDto { Items = assets, Total = assets.Count } };
+    private static SearchResponseDto SearchResult(List<AssetResponseDto> assets,
+        string? nextPage = null) => new()
+        { Assets = new SearchAssetResponseDto { Items = assets, Total = assets.Count, NextPage = nextPage } };
 
     [Test]
     public async Task LoadAssets_PaginatesAndCombinesMultipleTags()
@@ -54,7 +55,7 @@ public class TagAssetsPoolTests
         var tag2Assets = Enumerable.Range(0, 20).Select(i => Asset($"t2_{i}")).ToList();
 
         _api.Setup(a => a.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(), It.Is<MetadataSearchDto>(d => d.TagIds.Contains(tag1) && d.Page == 1), default))
-            .ReturnsAsync(SearchResult(page1));
+            .ReturnsAsync(SearchResult(page1, "2"));
         _api.Setup(a => a.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(), It.Is<MetadataSearchDto>(d => d.TagIds.Contains(tag1) && d.Page == 2), default))
             .ReturnsAsync(SearchResult(page2));
         _api.Setup(a => a.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(), It.Is<MetadataSearchDto>(d => d.TagIds.Contains(tag2)), default))

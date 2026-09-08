@@ -32,14 +32,12 @@ public class TagAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
         foreach (var tag in tags)
         {
             int page = 1;
-            int batchSize = 1000;
-            int itemsInPage;
-            do
+            while (true)
             {
                 var metadataBody = new MetadataSearchDto
                 {
                     Page = page,
-                    Size = batchSize,
+                    Size = SearchAssetPagination.PageSize,
                     TagIds = [tag.Id],
                     WithExif = true,
                     WithPeople = true
@@ -51,8 +49,6 @@ public class TagAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
                 }
 
                 var tagInfo = await immichApi.SearchAssetsAsync(null, null, metadataBody, ct);
-
-                itemsInPage = tagInfo.Assets.Items.Count;
 
                 // Attach the tag that matched this search
                 foreach (var asset in tagInfo.Assets.Items)
@@ -71,8 +67,10 @@ public class TagAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
                     tagAssets.Add(asset);
                 }
 
-                page++;
-            } while (itemsInPage == batchSize);
+                var nextPage = SearchAssetPagination.NextPage(tagInfo.Assets, page);
+                if (!nextPage.HasValue) break;
+                page = nextPage.Value;
+            }
         }
 
         return tagAssets;

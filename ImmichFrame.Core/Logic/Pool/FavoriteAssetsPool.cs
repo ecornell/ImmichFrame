@@ -10,14 +10,12 @@ public class FavoriteAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccoun
         var favoriteAssets = new List<AssetResponseDto>();
 
         int page = 1;
-        int batchSize = 1000;
-        long total;
-        do
+        while (true)
         {
             var metadataBody = new MetadataSearchDto
             {
                 Page = page,
-                Size = batchSize,
+                Size = SearchAssetPagination.PageSize,
                 IsFavorite = true,
                 WithExif = true,
                 WithPeople = true
@@ -30,11 +28,11 @@ public class FavoriteAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccoun
 
             var favoriteInfo = await immichApi.SearchAssetsAsync(null, null, metadataBody, ct);
 
-            total = favoriteInfo.Assets.Total;
-
             favoriteAssets.AddRange(favoriteInfo.Assets.Items);
-            page++;
-        } while (total == batchSize);
+            var nextPage = SearchAssetPagination.NextPage(favoriteInfo.Assets, page);
+            if (!nextPage.HasValue) break;
+            page = nextPage.Value;
+        }
 
         return favoriteAssets;
     }

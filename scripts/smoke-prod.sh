@@ -17,7 +17,16 @@ done
 curl_args=(--fail --silent --show-error --retry 5 --retry-delay 2 --max-time 10)
 auth_args=()
 if [[ -n "${AUTHENTICATION_SECRET:-}" ]]; then
-	auth_args=(-H "Authorization: Bearer $AUTHENTICATION_SECRET")
+	if [[ "$AUTHENTICATION_SECRET" == *$'\n'* || "$AUTHENTICATION_SECRET" == *$'\r'* ]]; then
+		echo "AUTHENTICATION_SECRET must not contain newlines." >&2
+		exit 1
+	fi
+	auth_config="$tmp_dir/auth.curlrc"
+	escaped_secret="${AUTHENTICATION_SECRET//\\/\\\\}"
+	escaped_secret="${escaped_secret//\"/\\\"}"
+	(umask 077; printf 'header = "Authorization: Bearer %s"\n' "$escaped_secret" >"$auth_config")
+	auth_args=(--config "$auth_config")
+	unset AUTHENTICATION_SECRET escaped_secret
 fi
 
 echo "Checking frame shell..."
@@ -56,6 +65,57 @@ if not settings["canPersist"]:
 if settings["warnings"]:
     raise SystemExit("Admin settings reported warnings: " + "; ".join(settings["warnings"]))
 
-print(f"Smoke checks passed: settings version {settings['version']}, "
+print(f"Settings check passed: version {settings['version']}, "
       f"{len(settings['accounts'])} account(s), writable configuration")
 PY
+
+echo "Checking asset selection and image proxy..."
+asset_id=""
+asset_type=""
+for attempt in $(seq 1 "${ASSET_BATCH_ATTEMPTS:-5}"); do
+	assets_path="$tmp_dir/assets-$attempt.json"
+	curl "${curl_args[@]}" "${auth_args[@]}" \
+		"$base_url/api/Asset" -o "$assets_path"
+
+	candidate="$(python3 - "$assets_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as response:
+    assets = json.load(response)
+if not isinstance(assets, list):
+    raise SystemExit("Asset response is not a list")
+image = next((asset for asset in assets if asset.get("type") == 0 and asset.get("id")), None)
+if image is not None:
+    print(image["id"], image["type"])
+PY
+)"
+	if [[ -n "$candidate" ]]; then
+		read -r asset_id asset_type <<<"$candidate"
+		break
+	fi
+done
+
+if [[ -z "$asset_id" ]]; then
+	echo "Asset responses contained no image to smoke test after ${ASSET_BATCH_ATTEMPTS:-5} attempts." >&2
+	exit 1
+fi
+
+curl "${curl_args[@]}" "${auth_args[@]}" -D "$tmp_dir/image.headers" \
+	"$base_url/api/Asset/$asset_id/Asset?assetType=$asset_type" -o "$tmp_dir/image"
+
+if [[ ! -s "$tmp_dir/image" ]]; then
+	echo "Asset image response was empty." >&2
+	exit 1
+fi
+
+content_type="$(sed -nE 's/^[Cc]ontent-[Tt]ype:[[:space:]]*([^;[:space:]]+).*/\1/p' "$tmp_dir/image.headers" | tr -d '\r' | tail -n 1)"
+case "$content_type" in
+	image/jpeg|image/webp) ;;
+	*)
+		echo "Asset image returned unsupported Content-Type '$content_type'." >&2
+		exit 1
+		;;
+esac
+
+echo "Smoke checks passed: selected image $asset_id and downloaded a nonempty $content_type response."

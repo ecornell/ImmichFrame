@@ -13,11 +13,21 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     private readonly IApiCache _apiCache;
     private readonly IAssetPool _pool;
     private readonly ImmichApi _immichApi;
-    private readonly string _downloadLocation = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache");
+    private readonly string _downloadLocation;
+    private readonly object _imageCacheLocksGate = new();
+    private readonly Dictionary<Guid, ImageCacheLock> _imageCacheLocks = [];
 
     public PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings, IHttpClientFactory httpClientFactory)
+        : this(accountSettings, generalSettings, httpClientFactory,
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache"))
+    {
+    }
+
+    internal PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings,
+        IHttpClientFactory httpClientFactory, string downloadLocation)
     {
         _generalSettings = generalSettings;
+        _downloadLocation = downloadLocation;
 
         var httpClient = httpClientFactory.CreateClient("ImmichApiAccountClient");
         AccountSettings = accountSettings;
@@ -95,17 +105,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
 
         if (assetType == AssetTypeEnum.IMAGE)
         {
-            var (fileName, contentType, fileStream) = await GetImageAsset(id);
-            return new AssetResponse
-            {
-                FileName = fileName,
-                ContentType = contentType,
-                FileStream = fileStream,
-                ContentRange = null,
-                IsPartial = false,
-                Owner = null,
-                ContentLength = null
-            };
+            return await GetImageAsset(id);
         }
 
         if (assetType == AssetTypeEnum.VIDEO)
@@ -115,62 +115,160 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
 
         throw new AssetNotFoundException($"Asset {id} is not a supported media type ({assetType}).");
     }
-    private async Task<(string fileName, string ContentType, Stream fileStream)> GetImageAsset(Guid id)
+    private async Task<AssetResponse> GetImageAsset(Guid id)
     {
-        if (_generalSettings.DownloadImages)
+        if (!_generalSettings.DownloadImages)
         {
-            if (!Directory.Exists(_downloadLocation))
+            var uncachedResponse = await DownloadImage(id);
+            var (uncachedFileName, uncachedContentType) = GetImageMetadata(id, uncachedResponse);
+            return CreateImageResponse(uncachedFileName, uncachedContentType,
+                uncachedResponse.Stream, uncachedResponse);
+        }
+
+        Directory.CreateDirectory(_downloadLocation);
+        using var cacheLock = await AcquireImageCacheLock(id);
+        var cached = FindFreshCachedImage(id);
+        if (cached != null)
+        {
+            return CreateImageResponse(Path.GetFileName(cached), GetCachedContentType(cached),
+                File.OpenRead(cached));
+        }
+
+        using var response = await DownloadImage(id);
+        var (fileName, contentType) = GetImageMetadata(id, response);
+        var filePath = Path.Combine(_downloadLocation, fileName);
+        var temporaryPath = Path.Combine(_downloadLocation, $".{fileName}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            await using (var destination = new FileStream(temporaryPath, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous))
             {
-                Directory.CreateDirectory(_downloadLocation);
+                await response.Stream.CopyToAsync(destination);
+                await destination.FlushAsync();
+                destination.Flush(flushToDisk: true);
             }
 
-            var file = Directory.GetFiles(_downloadLocation)
-                .FirstOrDefault(x => Path.GetFileNameWithoutExtension(x) == id.ToString());
-
-            if (!string.IsNullOrWhiteSpace(file))
-            {
-                if (_generalSettings.RenewImagesDuration > (DateTime.UtcNow - File.GetCreationTimeUtc(file)).Days)
-                {
-                    var fs = File.OpenRead(file);
-
-                    var ex = Path.GetExtension(file).TrimStart('.');
-
-                    return (Path.GetFileName(file), $"image/{ex}", fs);
-                }
-
-                File.Delete(file);
-            }
+            File.Move(temporaryPath, filePath, overwrite: true);
         }
-
-        var data = await _immichApi.ViewAssetAsync(null, id, string.Empty, AssetMediaSize.Preview, null);
-
-        if (data == null)
-            throw new AssetNotFoundException($"Asset {id} was not found!");
-
-        var contentType = "";
-        if (data.Headers.ContainsKey("Content-Type"))
+        finally
         {
-            contentType = data.Headers["Content-Type"].FirstOrDefault() ?? "";
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
         }
 
-        var ext = contentType.ToLower() == "image/webp" ? "webp" : "jpeg";
-        var fileName = $"{id}.{ext}";
-
-        if (_generalSettings.DownloadImages)
-        {
-            var stream = data.Stream;
-
-            var filePath = Path.Combine(_downloadLocation, fileName);
-
-            // save to folder
-            var fs = File.Create(filePath);
-            await stream.CopyToAsync(fs);
-            fs.Position = 0;
-            return (Path.GetFileName(filePath), contentType, fs);
-        }
-
-        return (fileName, contentType, data.Stream);
+        return CreateImageResponse(fileName, contentType, File.OpenRead(filePath));
     }
+
+    internal int ImageCacheLockCount
+    {
+        get
+        {
+            lock (_imageCacheLocksGate) return _imageCacheLocks.Count;
+        }
+    }
+
+    private async Task<IDisposable> AcquireImageCacheLock(Guid id)
+    {
+        ImageCacheLock cacheLock;
+        lock (_imageCacheLocksGate)
+        {
+            if (!_imageCacheLocks.TryGetValue(id, out cacheLock!))
+            {
+                cacheLock = new ImageCacheLock();
+                _imageCacheLocks.Add(id, cacheLock);
+            }
+            cacheLock.ReferenceCount++;
+        }
+
+        try
+        {
+            await cacheLock.Semaphore.WaitAsync();
+            return new ImageCacheLockLease(this, id, cacheLock);
+        }
+        catch
+        {
+            ReleaseImageCacheLockReference(id, cacheLock, releaseSemaphore: false);
+            throw;
+        }
+    }
+
+    private void ReleaseImageCacheLockReference(Guid id, ImageCacheLock cacheLock,
+        bool releaseSemaphore)
+    {
+        if (releaseSemaphore) cacheLock.Semaphore.Release();
+
+        lock (_imageCacheLocksGate)
+        {
+            cacheLock.ReferenceCount--;
+            if (cacheLock.ReferenceCount != 0) return;
+
+            _imageCacheLocks.Remove(id);
+            cacheLock.Semaphore.Dispose();
+        }
+    }
+
+    private sealed class ImageCacheLock
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int ReferenceCount { get; set; }
+    }
+
+    private sealed class ImageCacheLockLease(
+        PooledImmichFrameLogic owner, Guid id, ImageCacheLock cacheLock) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                owner.ReleaseImageCacheLockReference(id, cacheLock, releaseSemaphore: true);
+        }
+    }
+
+    private async Task<FileResponse> DownloadImage(Guid id)
+    {
+        var response = await _immichApi.ViewAssetAsync(null, id, string.Empty, AssetMediaSize.Preview, null);
+        return response ?? throw new AssetNotFoundException($"Asset {id} was not found!");
+    }
+
+    private string? FindFreshCachedImage(Guid id)
+    {
+        foreach (var file in Directory.EnumerateFiles(_downloadLocation, $"{id}.*"))
+        {
+            if (_generalSettings.RenewImagesDuration > (DateTime.UtcNow - File.GetCreationTimeUtc(file)).Days)
+                return file;
+
+            File.Delete(file);
+        }
+
+        return null;
+    }
+
+    private static (string fileName, string contentType) GetImageMetadata(Guid id, FileResponse response)
+    {
+        var contentType = response.Headers.TryGetValue("Content-Type", out var values)
+            ? values.FirstOrDefault() ?? "image/jpeg"
+            : "image/jpeg";
+        var extension = contentType.Equals("image/webp", StringComparison.OrdinalIgnoreCase) ? "webp" : "jpeg";
+        return ($"{id}.{extension}", contentType);
+    }
+
+    private static string GetCachedContentType(string file) =>
+        Path.GetExtension(file).Equals(".webp", StringComparison.OrdinalIgnoreCase)
+            ? "image/webp"
+            : "image/jpeg";
+
+    private static AssetResponse CreateImageResponse(string fileName, string contentType, Stream stream,
+        IDisposable? owner = null) => new()
+    {
+        FileName = fileName,
+        ContentType = contentType,
+        FileStream = stream,
+        ContentRange = null,
+        IsPartial = false,
+        Owner = owner,
+        ContentLength = null
+    };
 
     private async Task<AssetResponse> GetVideoAsset(Guid id, string? rangeHeader = null)
     {

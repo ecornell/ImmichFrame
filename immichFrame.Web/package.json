@@ -9,6 +9,7 @@
 		"prepare": "svelte-kit sync",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test": "node --experimental-strip-types --test tests/*.test.ts",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"api": "oazapfts ../openApi/swagger.json src/lib/immichFrameApi.ts"

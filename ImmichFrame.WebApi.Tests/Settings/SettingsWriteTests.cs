@@ -67,6 +67,52 @@ public class SettingsWriteTests
     }
 
     [Test]
+    public void WrittenSettingsAndBackup_AreOwnerOnlyOnUnix()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Ignore("Unix file modes are not available on Windows.");
+
+        var settings = SettingsWith(new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKey = "secret"
+        });
+
+        _writer.Write(settings);
+        File.GetUnixFileMode(_location.SettingsJsonPath).Should().Be(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        settings.GeneralSettingsImpl!.Interval++;
+        _writer.Write(settings);
+
+        File.GetUnixFileMode(_location.SettingsJsonPath).Should().Be(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.GetUnixFileMode(_location.SettingsJsonPath + ".bak").Should().Be(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.Exists(_location.SettingsJsonPath + ".tmp").Should().BeFalse();
+    }
+
+    [Test]
+    public void BackupPreparationFailure_DoesNotCommitNewSettings()
+    {
+        var settings = SettingsWith(new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKey = "secret"
+        });
+        settings.GeneralSettingsImpl!.Interval = 10;
+        _writer.Write(settings);
+        var original = File.ReadAllText(_location.SettingsJsonPath);
+
+        Directory.CreateDirectory(_location.SettingsJsonPath + ".bak");
+        settings.GeneralSettingsImpl.Interval = 20;
+
+        Assert.Throws<IOException>(() => _writer.Write(settings));
+        File.ReadAllText(_location.SettingsJsonPath).Should().Be(original);
+        File.Exists(_location.SettingsJsonPath + ".tmp").Should().BeFalse();
+        File.Exists(_location.SettingsJsonPath + ".bak.tmp").Should().BeFalse();
+    }
+
+    [Test]
     public void FileBackedApiKey_IsNeverWrittenInPlaintext()
     {
         var keyFile = Path.Combine(_configDir, "immich.key");

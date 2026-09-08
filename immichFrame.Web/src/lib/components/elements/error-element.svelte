@@ -14,9 +14,7 @@
 
 	let { message = '', authError: authError = false }: Props = $props();
 	let retryMessage = $derived(
-		!authError
-			? 'The page will automatically refresh every 30 seconds until a connection is re-established.'
-			: ''
+		!authError ? 'ImmichFrame will retry automatically while this page remains open.' : ''
 	);
 </script>
 

@@ -3,7 +3,7 @@ services:
   immichframe:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
-    restart: on-failure
+    restart: unless-stopped
     # volumes:
     #   - PATH/TO/CONFIG:/app/Config
     #   - PATH/TO/CUSTOMCSS/custom.css:/app/wwwroot/static/custom.css

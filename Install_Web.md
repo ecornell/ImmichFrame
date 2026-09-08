@@ -31,7 +31,7 @@ services:
   immichframe:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
-    restart: on-failure
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
@@ -96,7 +96,7 @@ services:
   immichframe:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
-    restart: on-failure
+    restart: unless-stopped
     volumes:
       - PATH/TO/CONFIG:/app/Config
     ports:
@@ -115,7 +115,7 @@ services:
   immichframe:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
-    restart: on-failure
+    restart: unless-stopped
     ports:
       - "8080:8080"
     env_file:

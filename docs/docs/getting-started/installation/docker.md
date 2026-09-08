@@ -34,7 +34,7 @@ services:
   immichframe:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
-    restart: on-failure
+    restart: unless-stopped
     volumes:
       - PATH/TO/CONFIG:/app/Config
     ports:
