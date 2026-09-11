@@ -296,7 +296,9 @@
 
 		try {
 			userPaused = false;
-			progressBar.restart(false);
+			// The progress bar mounts only after the first assets load (and unmounts
+			// on fatal errors). Startup and recovery must work without it.
+			progressBar?.restart(false);
 			$instantTransition = instant;
 			if (previous) await getPreviousAssets(currentEpoch, controller.signal);
 			else await getNextAssets(currentEpoch, controller.signal);
@@ -304,7 +306,7 @@
 
 			await tick();
 			await assetComponent?.play?.();
-			await progressBar.play();
+			await progressBar?.play();
 		} catch (caught) {
 			if (!(caught instanceof DOMException && caught.name === 'AbortError')) {
 				console.error('Asset transition failed:', caught);
