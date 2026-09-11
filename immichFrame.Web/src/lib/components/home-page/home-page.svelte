@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as api from '$lib/index';
+	import { oldestRepeat } from '$lib/asset-selection';
 	import ProgressBar from '$lib/components/elements/progress-bar.svelte';
 	import { slideshowStore } from '$lib/stores/slideshow.store';
 	import { clientIdentifierStore, authSecretStore } from '$lib/stores/persist.store';
@@ -246,13 +247,9 @@
 			if (unseenAssets.length) {
 				assetBacklog = unseenAssets;
 			} else {
-				// Once every returned asset has been seen, restart with the least-recently shown
-				// candidate rather than whichever asset happened to be first in the API response.
-				const recency = new Map(recentAssetKeys.map((key, index) => [key, index]));
-				assetBacklog = [...uniqueAssets].sort(
-					(a, b) =>
-						(recency.get(assetHistoryKey(a)) ?? -1) - (recency.get(assetHistoryKey(b)) ?? -1)
-				);
+				// Re-evaluate after the oldest candidate. Queuing the whole sample also queues
+				// recently displayed photos, causing short repeats once history fills up.
+				assetBacklog = oldestRepeat(uniqueAssets, recentAssetKeys, assetHistoryKey);
 			}
 			return true;
 		} catch (caught) {
