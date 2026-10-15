@@ -19,10 +19,13 @@ namespace ImmichFrame.WebApi.Tests.Controllers
     {
         private WebApplicationFactory<Program> _factory;
         private Mock<HttpMessageHandler> _mockHttpMessageHandler;
+        // Read when the test server is built, so tests may change it before CreateClient().
+        private bool _showVideos;
 
         [SetUp]
         public void Setup()
         {
+            _showVideos = false;
             _mockHttpMessageHandler = new Mock<HttpMessageHandler>().WithServerVersion();
 
             _factory = new WebApplicationFactory<Program>()
@@ -62,6 +65,7 @@ namespace ImmichFrame.WebApi.Tests.Controllers
                             ShowMemories = false,
                             ShowFavorites = true,
                             ShowArchived = false,
+                            ShowVideos = _showVideos,
                             Albums = new List<Guid>(),
                             ExcludedAlbums = new List<Guid>(),
                             People = new List<Guid>()
@@ -149,6 +153,91 @@ namespace ImmichFrame.WebApi.Tests.Controllers
             // For now, we'll just check if the response is not empty.
             // A more robust check would be to deserialize the response and check the asset ID.
             Assert.That(content, Is.Not.Empty);
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_IncludeVideos_ReturnsVideoPosterAndDuration()
+        {
+            _showVideos = true;
+            var videoId = Guid.NewGuid();
+            SetupSearchAndThumbnail(BuildAssetResponse(videoId, AssetTypeEnum.VIDEO, duration: 12_500));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeVideos=true");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = json.RootElement;
+            Assert.That(root.GetProperty("assetId").GetGuid(), Is.EqualTo(videoId));
+            Assert.That(root.GetProperty("assetType").GetInt32(), Is.EqualTo((int)AssetTypeEnum.VIDEO));
+            Assert.That(root.GetProperty("durationSeconds").GetDouble(), Is.EqualTo(12.5));
+            Assert.That(root.GetProperty("randomImageBase64").GetString(), Is.Not.Empty);
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_WithoutIncludeVideos_SkipsVideos()
+        {
+            _showVideos = true;
+            SetupSearchAndThumbnail(BuildAssetResponse(Guid.NewGuid(), AssetTypeEnum.VIDEO, duration: 12_500));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo");
+
+            Assert.That(response.IsSuccessStatusCode, Is.False);
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_IncludeVideos_ReturnsImageWithoutDuration()
+        {
+            _showVideos = true;
+            var imageId = Guid.NewGuid();
+            SetupSearchAndThumbnail(BuildAssetResponse(imageId));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeVideos=true");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = json.RootElement;
+            Assert.That(root.GetProperty("assetId").GetGuid(), Is.EqualTo(imageId));
+            Assert.That(root.GetProperty("assetType").GetInt32(), Is.EqualTo((int)AssetTypeEnum.IMAGE));
+            Assert.That(root.GetProperty("durationSeconds").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        }
+
+        private void SetupSearchAndThumbnail(AssetResponseDto asset)
+        {
+            var jsonResponse = JsonSerializer.Serialize(new SearchResponseDto
+            {
+                Assets = new SearchAssetResponseDto
+                {
+                    Count = 1,
+                    Total = 1,
+                    Items = { asset },
+                    NextPage = null,
+                },
+            });
+            _mockHttpMessageHandler.Protected()
+                .Setup<Task<HttpResponseMessage>>(
+                    "SendAsync",
+                    ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/search/metadata")),
+                    ItExpr.IsAny<CancellationToken>()
+                )
+                .ReturnsAsync(() => new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(jsonResponse)
+                });
+            _mockHttpMessageHandler.Protected()
+                .Setup<Task<HttpResponseMessage>>(
+                    "SendAsync",
+                    ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/thumbnail")),
+                    ItExpr.IsAny<CancellationToken>()
+                )
+                .ReturnsAsync(() => new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new ByteArrayContent(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 })
+                });
         }
 
         // Builds a valid AssetResponseDto from the generated client types. Only the

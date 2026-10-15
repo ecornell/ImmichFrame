@@ -15,6 +15,9 @@ namespace ImmichFrame.WebApi.Controllers
         public required string ThumbHashImageBase64 { get; set; }
         public required string PhotoDate { get; set; }
         public required string ImageLocation { get; set; }
+        public Guid? AssetId { get; set; }
+        public AssetTypeEnum? AssetType { get; set; }
+        public double? DurationSeconds { get; set; }
     }
 
 
@@ -134,7 +137,7 @@ namespace ImmichFrame.WebApi.Controllers
 
         [HttpGet("RandomImageAndInfo", Name = "GetRandomImageAndInfo")]
         [Produces("application/json")]
-        public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "")
+        public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false)
         {
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("Random image requested by '{sanitizedClientIdentifier}'", sanitizedClientIdentifier);
@@ -145,7 +148,10 @@ namespace ImmichFrame.WebApi.Controllers
             {
                 var candidate = await _logic.GetNextAsset();
                 if (candidate == null) break;
-                if (candidate.Type == AssetTypeEnum.IMAGE)
+                // Older native clients cannot play videos, so they stay opt-in. The returned
+                // image of a video is its Immich preview, used as a poster frame.
+                if (candidate.Type == AssetTypeEnum.IMAGE ||
+                    (includeVideos && candidate.Type == AssetTypeEnum.VIDEO))
                 {
                     randomAsset = candidate;
                     break;
@@ -168,10 +174,17 @@ namespace ImmichFrame.WebApi.Controllers
                 randomImageBase64 = Convert.ToBase64String(memoryStream.ToArray());
             }
 
-            randomAsset.ThumbhashImage!.Position = 0;
-            byte[] byteArray = new byte[randomAsset.ThumbhashImage.Length];
-            randomAsset.ThumbhashImage.Read(byteArray, 0, byteArray.Length);
-            string thumbHashBase64 = Convert.ToBase64String(byteArray);
+            string thumbHashBase64 = string.Empty;
+            using (var thumbhashImage = randomAsset.ThumbhashImage)
+            {
+                if (thumbhashImage != null)
+                {
+                    thumbhashImage.Position = 0;
+                    using var thumbhashMemory = new MemoryStream();
+                    await thumbhashImage.CopyToAsync(thumbhashMemory);
+                    thumbHashBase64 = Convert.ToBase64String(thumbhashMemory.ToArray());
+                }
+            }
 
             CultureInfo cultureInfo = new CultureInfo(_settings.Language);
             string photoDateFormat = _settings.PhotoDateFormat!.Replace("''", "\\'");
@@ -189,7 +202,12 @@ namespace ImmichFrame.WebApi.Controllers
                 RandomImageBase64 = randomImageBase64,
                 ThumbHashImageBase64 = thumbHashBase64,
                 PhotoDate = photoDate,
-                ImageLocation = imageLocation
+                ImageLocation = imageLocation,
+                AssetId = randomAsset.Id,
+                AssetType = randomAsset.Type,
+                DurationSeconds = randomAsset.Type == AssetTypeEnum.VIDEO && randomAsset.Duration > 0
+                    ? randomAsset.Duration / 1000.0
+                    : null
             };
         }
     }

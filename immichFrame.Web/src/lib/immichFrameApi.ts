@@ -308,6 +308,9 @@ export type ImageResponse = {
     thumbHashImageBase64: string | null;
     photoDate: string | null;
     imageLocation: string | null;
+    assetId?: string | null;
+    assetType?: AssetTypeEnum;
+    durationSeconds?: number | null;
 };
 export type IAppointment = {
     startTime?: string;
@@ -485,14 +488,16 @@ export function getAsset(id: string, { clientIdentifier, assetType }: {
         ...opts
     });
 }
-export function getRandomImageAndInfo({ clientIdentifier }: {
+export function getRandomImageAndInfo({ clientIdentifier, includeVideos }: {
     clientIdentifier?: string;
+    includeVideos?: boolean;
 } = {}, opts?: Oazapfts.RequestOpts) {
     return oazapfts.fetchJson<{
         status: 200;
         data: ImageResponse;
     }>(`/api/Asset/RandomImageAndInfo${QS.query(QS.explode({
-        clientIdentifier
+        clientIdentifier,
+        includeVideos
     }))}`, {
         ...opts
     });

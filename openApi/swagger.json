@@ -654,6 +654,14 @@
               "type": "string",
               "default": ""
             }
+          },
+          {
+            "name": "includeVideos",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -2045,6 +2053,19 @@
           },
           "imageLocation": {
             "type": "string",
+            "nullable": true
+          },
+          "assetId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "assetType": {
+            "$ref": "#/components/schemas/AssetTypeEnum"
+          },
+          "durationSeconds": {
+            "type": "number",
+            "format": "double",
             "nullable": true
           }
         },
