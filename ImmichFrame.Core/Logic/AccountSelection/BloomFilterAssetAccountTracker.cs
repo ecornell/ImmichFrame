@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using BloomFilter;
+using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -44,7 +45,7 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
         }
     }
 
-    public T ForAsset<T>(Guid assetId, Func<IAccountImmichFrameLogic, T> f)
+    public async Task<T> ForAssetAsync<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
     {
         foreach (var entry in logicToFilter)
         {
@@ -56,10 +57,14 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
             {
                 try
                 {
-                    return f(entry.Key);
+                    // Awaited inside the try: the callers are async, so a failure lives in the
+                    // returned Task and would otherwise escape this catch.
+                    return await f(entry.Key);
                 }
-                catch (Exception e)
+                catch (ApiException e) when (e.StatusCode is 400 or 404)
                 {
+                    // Immich answers 400/404 for an asset that is not in this account. Any other
+                    // status (e.g. 416 for a bad Range) is a real answer and must propagate.
                     _logger.LogWarning(e, "Failed to locate asset {assetId} in {entry.Key}. Must be false positive, trying next account.", assetId, entry.Key);
                 }
             }

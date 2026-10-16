@@ -41,18 +41,18 @@ public class MultiImmichFrameLogicDelegate : IImmichFrameLogic
 
 
     public Task<AssetResponseDto> GetAssetInfoById(Guid assetId)
-        => _accountSelectionStrategy.ForAsset(assetId, async logic => (await logic.GetAssetInfoById(assetId)).WithAccount(logic));
+        => _accountSelectionStrategy.ForAssetAsync(assetId, async logic => (await logic.GetAssetInfoById(assetId)).WithAccount(logic));
 
     public Task<IEnumerable<AssetFaceResponseDto>> GetAssetFacesById(Guid assetId)
-        => _accountSelectionStrategy.ForAsset(assetId, async logic => await logic.GetAssetFacesById(assetId));
+        => _accountSelectionStrategy.ForAssetAsync(assetId, async logic => await logic.GetAssetFacesById(assetId));
 
 
     public Task<IEnumerable<AlbumResponseDto>> GetAlbumInfoById(Guid assetId)
-        => _accountSelectionStrategy.ForAsset(assetId, logic => logic.GetAlbumInfoById(assetId));
+        => _accountSelectionStrategy.ForAssetAsync(assetId, logic => logic.GetAlbumInfoById(assetId));
 
 
     public Task<AssetResponse> GetAsset(Guid assetId, AssetTypeEnum? assetType = null, string? rangeHeader = null)
-        => _accountSelectionStrategy.ForAsset(assetId, logic => logic.GetAsset(assetId, assetType, rangeHeader));
+        => _accountSelectionStrategy.ForAssetAsync(assetId, logic => logic.GetAsset(assetId, assetType, rangeHeader));
 
     public async Task<long> GetTotalAssets()
     {
