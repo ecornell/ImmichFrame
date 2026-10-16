@@ -4,9 +4,10 @@ using ImmichFrame.Core.Interfaces;
 
 namespace ImmichFrame.Core.Logic.Pool;
 
-public abstract class CachingApiAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSettings accountSettings) : IAssetPool
+public abstract class CachingApiAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSettings accountSettings,
+    IAssetShowHistory? showHistory = null) : IAssetPool
 {
-    private readonly AssetShuffleCycle _cycle = new();
+    private readonly IAssetShowHistory _showHistory = showHistory ?? new AssetShowHistory();
 
     public async Task<long> GetAssetCount(CancellationToken ct = default)
     {
@@ -18,7 +19,7 @@ public abstract class CachingApiAssetsPool(IApiCache apiCache, ImmichApi immichA
         if (requested <= 0) return [];
         var assets = await AllAssets(ct);
         ct.ThrowIfCancellationRequested();
-        return _cycle.Take(assets, requested);
+        return _showHistory.PickLeastRecent(assets, requested);
     }
 
     private async Task<IEnumerable<AssetResponseDto>> AllAssets(CancellationToken ct = default)

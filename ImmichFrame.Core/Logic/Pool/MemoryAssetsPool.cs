@@ -5,7 +5,8 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace ImmichFrame.Core.Logic.Pool;
 
-public class MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSettings) : CachingApiAssetsPool(new DailyApiCache(), immichApi, accountSettings)
+public class MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSettings,
+    IAssetShowHistory? showHistory = null) : CachingApiAssetsPool(new DailyApiCache(), immichApi, accountSettings, showHistory)
 {
     protected override async Task<IEnumerable<AssetResponseDto>> LoadAssets(CancellationToken ct = default)
     {

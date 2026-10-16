@@ -12,21 +12,24 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     private readonly IGeneralSettings _generalSettings;
     private readonly IApiCache _apiCache;
     private readonly IAssetPool _pool;
+    private readonly IAssetShowHistory _showHistory;
     private readonly ImmichApi _immichApi;
     private readonly string _downloadLocation;
     private readonly object _imageCacheLocksGate = new();
     private readonly Dictionary<Guid, ImageCacheLock> _imageCacheLocks = [];
 
-    public PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings, IHttpClientFactory httpClientFactory)
+    public PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings,
+        IHttpClientFactory httpClientFactory, IAssetShowHistory showHistory)
         : this(accountSettings, generalSettings, httpClientFactory,
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache"))
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache"), showHistory)
     {
     }
 
     internal PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings,
-        IHttpClientFactory httpClientFactory, string downloadLocation)
+        IHttpClientFactory httpClientFactory, string downloadLocation, IAssetShowHistory? showHistory = null)
     {
         _generalSettings = generalSettings;
+        _showHistory = showHistory ?? new AssetShowHistory();
         _downloadLocation = downloadLocation;
 
         var httpClient = httpClientFactory.CreateClient("ImmichApiAccountClient");
@@ -58,19 +61,19 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
         var pools = new List<IAssetPool>();
 
         if (accountSettings.ShowFavorites)
-            pools.Add(new FavoriteAssetsPool(_apiCache, _immichApi, accountSettings));
+            pools.Add(new FavoriteAssetsPool(_apiCache, _immichApi, accountSettings, _showHistory));
 
         if (accountSettings.ShowMemories)
-            pools.Add(new MemoryAssetsPool(_immichApi, accountSettings));
+            pools.Add(new MemoryAssetsPool(_immichApi, accountSettings, _showHistory));
 
         if (hasAlbums)
-            pools.Add(new AlbumAssetsPool(_apiCache, _immichApi, accountSettings));
+            pools.Add(new AlbumAssetsPool(_apiCache, _immichApi, accountSettings, _showHistory));
 
         if (hasPeople)
-            pools.Add(new PersonAssetsPool(_apiCache, _immichApi, accountSettings));
+            pools.Add(new PersonAssetsPool(_apiCache, _immichApi, accountSettings, _showHistory));
 
         if (hasTags)
-            pools.Add(new TagAssetsPool(_apiCache, _immichApi, accountSettings));
+            pools.Add(new TagAssetsPool(_apiCache, _immichApi, accountSettings, _showHistory));
 
         return new MultiAssetPool(pools);
     }

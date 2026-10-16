@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication;
 using System.Reflection;
 using ImmichFrame.Core.Logic;
 using ImmichFrame.Core.Logic.AccountSelection;
+using ImmichFrame.Core.Logic.Pool;
 using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Helpers.Config;
 using ImmichFrame.WebApi.Settings;
@@ -98,6 +99,10 @@ builder.Services.AddSingleton<IImmichCatalogBrowser, ImmichCatalogBrowser>();
 builder.Services.AddSingleton<ISettingsResettable>(srv => (ISettingsResettable)srv.GetRequiredService<IWeatherService>());
 builder.Services.AddSingleton<ISettingsResettable>(srv => (ISettingsResettable)srv.GetRequiredService<ICalendarService>());
 builder.Services.AddSingleton<IAssetAccountTracker, BloomFilterAssetAccountTracker>();
+// One history for every account graph and client, so a settings save does not reset it.
+builder.Services.AddSingleton<AssetShowHistory>();
+builder.Services.AddSingleton<IAssetShowHistory>(srv => srv.GetRequiredService<AssetShowHistory>());
+builder.Services.AddHostedService<AssetShowHistoryPersistence>();
 builder.Services.AddSingleton<Func<IList<IAccountImmichFrameLogic>, IAccountSelectionStrategy>>(srv =>
     accounts => ActivatorUtilities.CreateInstance<TotalAccountImagesSelectionStrategy>(srv, accounts));
 builder.Services.AddHttpClient(); // Ensures IHttpClientFactory is available

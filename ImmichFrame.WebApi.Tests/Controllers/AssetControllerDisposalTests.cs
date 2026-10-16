@@ -1,5 +1,6 @@
 using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Interfaces;
+using ImmichFrame.Core.Logic.Pool;
 using ImmichFrame.Core.Models;
 using ImmichFrame.WebApi.Controllers;
 using Microsoft.AspNetCore.Http;
@@ -43,7 +44,7 @@ public class AssetControllerDisposalTests
         settings.SetupGet(x => x.ImageLocationFormat).Returns("City,State,Country");
         var controller = new AssetController(
             NullLogger<AssetController>.Instance, logic.Object, settings.Object,
-            new MemoryCache(new MemoryCacheOptions()));
+            new MemoryCache(new MemoryCacheOptions()), new AssetShowHistory());
 
         var response = await controller.GetRandomImageAndInfo();
 
@@ -75,7 +76,7 @@ public class AssetControllerDisposalTests
         httpContext.Response.Body = body;
         var controller = new AssetController(
             NullLogger<AssetController>.Instance, logic.Object, Mock.Of<IGeneralSettings>(),
-            new MemoryCache(new MemoryCacheOptions()))
+            new MemoryCache(new MemoryCacheOptions()), new AssetShowHistory())
         {
             ControllerContext = new ControllerContext { HttpContext = httpContext }
         };

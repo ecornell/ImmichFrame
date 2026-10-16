@@ -31,17 +31,20 @@ namespace ImmichFrame.WebApi.Controllers
         private readonly IImmichFrameLogic _logic;
         private readonly IGeneralSettings _settings;
         private readonly IMemoryCache _cache;
+        private readonly IAssetShowHistory _showHistory;
 
         // Long enough to cover a client fetching the bytes (or retrying) right after choosing an
         // asset, short enough not to swallow a genuine re-show of the same asset.
         private static readonly TimeSpan WebhookDedupeWindow = TimeSpan.FromMinutes(1);
 
-        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings, IMemoryCache cache)
+        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings, IMemoryCache cache,
+            IAssetShowHistory showHistory)
         {
             _logger = logger;
             _logic = logic;
             _settings = settings;
             _cache = cache;
+            _showHistory = showHistory;
         }
 
         [HttpGet(Name = "GetAssets")]
@@ -110,6 +113,10 @@ namespace ImmichFrame.WebApi.Controllers
                 return StatusCode(StatusCodes.Status416RangeNotSatisfiable);
             }
 
+            // Fetching the bytes is when the SPA shows an asset, video ranges included; re-recording
+            // an asset already chosen by RandomImageAndInfo only refreshes its stamp.
+            _showHistory.RecordShown(id);
+
             // One notification per asset shown. A plain image fetch is the "shown" event for the SPA;
             // it is skipped when RandomImageAndInfo already notified for this asset and client, and
             // for retries. Video streams never notify: their requests are ranged and repeated.
@@ -173,6 +180,11 @@ namespace ImmichFrame.WebApi.Controllers
                 return Problem(statusCode: StatusCodes.Status404NotFound, title: "No asset found",
                     detail: includeVideos ? "No image or video asset was found" : "No image asset was found");
             }
+
+            // Only the chosen asset counts as shown; rejected candidates stay least recently shown.
+            _showHistory.RecordShown(randomAsset.Id);
+            _logger.LogInformation("Showing {assetType} '{id}' on '{sanitizedClientIdentifier}'",
+                randomAsset.Type, randomAsset.Id, sanitizedClientIdentifier);
 
             // Choosing the asset is the "shown" event for these clients, whether or not the image is
             // inlined. With includeImage=false they fetch the bytes from GetAsset, which then
@@ -250,10 +262,19 @@ namespace ImmichFrame.WebApi.Controllers
             bool IsAcceptable(AssetResponseDto asset) =>
                 asset.Type == AssetTypeEnum.IMAGE || (includeVideos && asset.Type == AssetTypeEnum.VIDEO);
 
-            // The single next asset is the common case and keeps the pools' shuffle cycle intact.
+            // A rejected candidate is recorded as if shown, so it ages out of the least recently shown
+            // share instead of filling it for a client that can never show it.
+            bool Accept(AssetResponseDto asset)
+            {
+                if (IsAcceptable(asset)) return true;
+                _showHistory.RecordShown(asset.Id);
+                return false;
+            }
+
+            // The single next asset is the common case.
             var next = await _logic.GetNextAsset();
             if (next == null) return null;
-            if (IsAcceptable(next)) return next;
+            if (Accept(next)) return next;
 
             // Otherwise sample whole batches, so a video-heavy library (or AUDIO/OTHER assets)
             // doesn't need one round trip per rejected asset.
@@ -261,7 +282,7 @@ namespace ImmichFrame.WebApi.Controllers
             {
                 var batch = (await _logic.GetAssets()).ToList();
                 if (batch.Count == 0) return null;
-                var match = batch.FirstOrDefault(IsAcceptable);
+                var match = batch.FirstOrDefault(Accept);
                 if (match != null) return match;
             }
 

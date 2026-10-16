@@ -16,19 +16,16 @@ public interface IAssetPool
         var ct = cancellationToken ?? new CancellationTokenSource(TimeSpan.FromMinutes(1)).Token;
 
         var itemsRead = new List<AssetResponseDto>(requested > 0 ? requested : 0);
+        var ids = new HashSet<Guid>();
 
-        for (var i = 0; i < requested; i++)
+        // Each supplied asset is picked independently, so skip repeats, with a bounded number of
+        // extra attempts for pools smaller than the request.
+        for (var attempt = 0; itemsRead.Count < requested && attempt < requested * 3; attempt++)
         {
             var asset = await supplier(ct);
 
-            if (asset != null)
-            {
-                itemsRead.Add(asset);
-            }
-            else
-            {
-                break;
-            }
+            if (asset == null) break;
+            if (ids.Add(asset.Id)) itemsRead.Add(asset);
         }
 
         return itemsRead;
