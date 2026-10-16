@@ -135,7 +135,17 @@ namespace ImmichFrame.WebApi.Controllers
 
                 using (asset.Owner)
                 {
-                    await asset.FileStream.CopyToAsync(Response.Body);
+                    try
+                    {
+                        await asset.FileStream.CopyToAsync(Response.Body, HttpContext.RequestAborted);
+                    }
+                    catch (Exception ex) when (ex is OperationCanceledException or IOException &&
+                                               HttpContext.RequestAborted.IsCancellationRequested)
+                    {
+                        // The player seeked or closed the stream; disposing the owner releases
+                        // the upstream Immich response.
+                        _logger.LogDebug("Client aborted video range request for '{id}'", id);
+                    }
                 }
                 return new EmptyResult();
             }
