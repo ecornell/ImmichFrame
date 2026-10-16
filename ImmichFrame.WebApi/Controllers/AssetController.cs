@@ -137,7 +137,7 @@ namespace ImmichFrame.WebApi.Controllers
 
         [HttpGet("RandomImageAndInfo", Name = "GetRandomImageAndInfo")]
         [Produces("application/json")]
-        public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false)
+        public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false, bool includeImage = true)
         {
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("Random image requested by '{sanitizedClientIdentifier}'", sanitizedClientIdentifier);
@@ -161,17 +161,22 @@ namespace ImmichFrame.WebApi.Controllers
             if (randomAsset == null)
                 throw new AssetNotFoundException("No image asset was found");
 
-            var asset = await _logic.GetAsset(randomAsset.Id, AssetTypeEnum.IMAGE);
-            var notification = new AssetRequestedNotification(randomAsset.Id, sanitizedClientIdentifier);
-            _ = _logic.SendWebhookNotification(notification);
-
-            string randomImageBase64;
-            using (asset.Owner)
-            await using (asset.FileStream)
-            using (var memoryStream = new MemoryStream())
+            // Clients that pass includeImage=false fetch the raw bytes from GetAsset with
+            // assetType=IMAGE, which also sends the webhook notification.
+            string randomImageBase64 = string.Empty;
+            if (includeImage)
             {
-                await asset.FileStream.CopyToAsync(memoryStream);
-                randomImageBase64 = Convert.ToBase64String(memoryStream.ToArray());
+                var asset = await _logic.GetAsset(randomAsset.Id, AssetTypeEnum.IMAGE);
+                var notification = new AssetRequestedNotification(randomAsset.Id, sanitizedClientIdentifier);
+                _ = _logic.SendWebhookNotification(notification);
+
+                using (asset.Owner)
+                await using (asset.FileStream)
+                using (var memoryStream = new MemoryStream())
+                {
+                    await asset.FileStream.CopyToAsync(memoryStream);
+                    randomImageBase64 = Convert.ToBase64String(memoryStream.ToArray());
+                }
             }
 
             string thumbHashBase64 = string.Empty;

@@ -488,16 +488,18 @@ export function getAsset(id: string, { clientIdentifier, assetType }: {
         ...opts
     });
 }
-export function getRandomImageAndInfo({ clientIdentifier, includeVideos }: {
+export function getRandomImageAndInfo({ clientIdentifier, includeVideos, includeImage }: {
     clientIdentifier?: string;
     includeVideos?: boolean;
+    includeImage?: boolean;
 } = {}, opts?: Oazapfts.RequestOpts) {
     return oazapfts.fetchJson<{
         status: 200;
         data: ImageResponse;
     }>(`/api/Asset/RandomImageAndInfo${QS.query(QS.explode({
         clientIdentifier,
-        includeVideos
+        includeVideos,
+        includeImage
     }))}`, {
         ...opts
     });

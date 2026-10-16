@@ -204,6 +204,33 @@ namespace ImmichFrame.WebApi.Tests.Controllers
             Assert.That(root.GetProperty("durationSeconds").ValueKind, Is.EqualTo(JsonValueKind.Null));
         }
 
+        [Test]
+        public async Task GetRandomImageAndInfo_WithoutImage_ReturnsMetadataAndServesRawBytesSeparately()
+        {
+            _showVideos = true;
+            var videoId = Guid.NewGuid();
+            SetupSearchAndThumbnail(BuildAssetResponse(videoId, AssetTypeEnum.VIDEO, duration: 12_500));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeVideos=true&includeImage=false");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = json.RootElement;
+            Assert.That(root.GetProperty("randomImageBase64").GetString(), Is.Empty);
+            Assert.That(root.GetProperty("assetId").GetGuid(), Is.EqualTo(videoId));
+            Assert.That(root.GetProperty("durationSeconds").GetDouble(), Is.EqualTo(12.5));
+            _mockHttpMessageHandler.Protected().Verify(
+                "SendAsync",
+                Times.Never(),
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/thumbnail")),
+                ItExpr.IsAny<CancellationToken>());
+
+            // The client then fetches the same poster/preview as raw bytes.
+            var bytes = await client.GetByteArrayAsync($"/api/Asset/{videoId}/Asset?assetType=IMAGE");
+            Assert.That(bytes, Is.EqualTo(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }));
+        }
+
         private void SetupSearchAndThumbnail(AssetResponseDto asset)
         {
             var jsonResponse = JsonSerializer.Serialize(new SearchResponseDto

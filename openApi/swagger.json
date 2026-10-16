@@ -662,6 +662,14 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "includeImage",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
           }
         ],
         "responses": {
