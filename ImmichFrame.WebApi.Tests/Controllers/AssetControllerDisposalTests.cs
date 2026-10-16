@@ -43,7 +43,7 @@ public class AssetControllerDisposalTests
 
         var response = await controller.GetRandomImageAndInfo();
 
-        Assert.That(response.RandomImageBase64, Is.EqualTo("AQID"));
+        Assert.That(response.Value!.RandomImageBase64, Is.EqualTo("AQID"));
         Assert.That(imageStream.Disposed, Is.True);
         Assert.That(owner.Disposed, Is.True);
     }

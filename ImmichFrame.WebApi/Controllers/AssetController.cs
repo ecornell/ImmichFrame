@@ -137,29 +137,21 @@ namespace ImmichFrame.WebApi.Controllers
 
         [HttpGet("RandomImageAndInfo", Name = "GetRandomImageAndInfo")]
         [Produces("application/json")]
-        public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false, bool includeImage = true)
+        [ProducesResponseType(typeof(ImageResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<ImageResponse>> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false, bool includeImage = true)
         {
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("Random image requested by '{sanitizedClientIdentifier}'", sanitizedClientIdentifier);
 
-            AssetResponseDto? randomAsset = null;
-            const int maxAttempts = 10;
-            for (int i = 0; i < maxAttempts; i++)
-            {
-                var candidate = await _logic.GetNextAsset();
-                if (candidate == null) break;
-                // Older native clients cannot play videos, so they stay opt-in. The returned
-                // image of a video is its Immich preview, used as a poster frame.
-                if (candidate.Type == AssetTypeEnum.IMAGE ||
-                    (includeVideos && candidate.Type == AssetTypeEnum.VIDEO))
-                {
-                    randomAsset = candidate;
-                    break;
-                }
-            }
-
+            var randomAsset = await PickRandomAsset(includeVideos);
             if (randomAsset == null)
-                throw new AssetNotFoundException("No image asset was found");
+            {
+                _logger.LogWarning("No {kind} asset found for '{sanitizedClientIdentifier}'",
+                    includeVideos ? "image or video" : "image", sanitizedClientIdentifier);
+                return Problem(statusCode: StatusCodes.Status404NotFound, title: "No asset found",
+                    detail: includeVideos ? "No image or video asset was found" : "No image asset was found");
+            }
 
             // Clients that pass includeImage=false fetch the raw bytes from GetAsset with
             // assetType=IMAGE, which also sends the webhook notification.
@@ -214,6 +206,34 @@ namespace ImmichFrame.WebApi.Controllers
                     ? randomAsset.Duration / 1000.0
                     : null
             };
+        }
+
+        // Batches beyond the first asset, used when the next asset is of a type the client can't show.
+        private const int MaxFallbackBatches = 3;
+
+        private async Task<AssetResponseDto?> PickRandomAsset(bool includeVideos)
+        {
+            // Older native clients cannot play videos, so they stay opt-in. The returned
+            // image of a video is its Immich preview, used as a poster frame.
+            bool IsAcceptable(AssetResponseDto asset) =>
+                asset.Type == AssetTypeEnum.IMAGE || (includeVideos && asset.Type == AssetTypeEnum.VIDEO);
+
+            // The single next asset is the common case and keeps the pools' shuffle cycle intact.
+            var next = await _logic.GetNextAsset();
+            if (next == null) return null;
+            if (IsAcceptable(next)) return next;
+
+            // Otherwise sample whole batches, so a video-heavy library (or AUDIO/OTHER assets)
+            // doesn't need one round trip per rejected asset.
+            for (int i = 0; i < MaxFallbackBatches; i++)
+            {
+                var batch = (await _logic.GetAssets()).ToList();
+                if (batch.Count == 0) return null;
+                var match = batch.FirstOrDefault(IsAcceptable);
+                if (match != null) return match;
+            }
+
+            return null;
         }
     }
 }

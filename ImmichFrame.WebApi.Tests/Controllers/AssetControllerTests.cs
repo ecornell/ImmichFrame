@@ -9,6 +9,7 @@ using ImmichFrame.Core.Api;
 using ImmichFrame.WebApi.Models;
 using ImmichFrame.WebApi.Tests.Mocks;
 using ImmichFrame.Core.Interfaces; // Added this back
+using ImmichFrame.Core.Models;
 using System.Text.Json;
 using NUnit.Framework;
 
@@ -21,11 +22,15 @@ namespace ImmichFrame.WebApi.Tests.Controllers
         private Mock<HttpMessageHandler> _mockHttpMessageHandler;
         // Read when the test server is built, so tests may change it before CreateClient().
         private bool _showVideos;
+        // When set before CreateClient(), replaces the real logic so tests can script assets and
+        // observe webhook notifications (WebhookHelper posts with its own HttpClient).
+        private Mock<IImmichFrameLogic>? _mockLogic;
 
         [SetUp]
         public void Setup()
         {
             _showVideos = false;
+            _mockLogic = null;
             _mockHttpMessageHandler = new Mock<HttpMessageHandler>().WithServerVersion();
 
             _factory = new WebApplicationFactory<Program>()
@@ -79,6 +84,8 @@ namespace ImmichFrame.WebApi.Tests.Controllers
 
                         services.AddSingleton<IServerSettings>(serverSettings);
                         services.AddSingleton<IGeneralSettings>(generalSettings);
+                        if (_mockLogic != null)
+                            services.AddSingleton(_mockLogic.Object);
                         // Ensure IAccountSettings can be resolved if needed by MultiImmichFrameLogicDelegate directly
                         // However, PooledImmichFrameLogic receives IAccountSettings via the factory Func
                     });
@@ -175,7 +182,7 @@ namespace ImmichFrame.WebApi.Tests.Controllers
         }
 
         [Test]
-        public async Task GetRandomImageAndInfo_WithoutIncludeVideos_SkipsVideos()
+        public async Task GetRandomImageAndInfo_WithoutIncludeVideos_OnlyVideos_Returns404()
         {
             _showVideos = true;
             SetupSearchAndThumbnail(BuildAssetResponse(Guid.NewGuid(), AssetTypeEnum.VIDEO, duration: 12_500));
@@ -183,7 +190,31 @@ namespace ImmichFrame.WebApi.Tests.Controllers
 
             var response = await client.GetAsync("/api/Asset/RandomImageAndInfo");
 
-            Assert.That(response.IsSuccessStatusCode, Is.False);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.That(json.RootElement.GetProperty("status").GetInt32(), Is.EqualTo(404));
+            Assert.That(json.RootElement.GetProperty("detail").GetString(), Is.EqualTo("No image asset was found"));
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_WithoutIncludeVideos_SkipsVideoAndAudioInBatch()
+        {
+            var video = BuildAssetResponse(Guid.NewGuid(), AssetTypeEnum.VIDEO, duration: 12_500);
+            var audio = BuildAssetResponse(Guid.NewGuid(), AssetTypeEnum.AUDIO);
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(video);
+            _mockLogic.Setup(l => l.GetAssets()).ReturnsAsync(new[] { video, audio, image });
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.That(json.RootElement.GetProperty("assetId").GetGuid(), Is.EqualTo(image.Id));
+            Assert.That(json.RootElement.GetProperty("assetType").GetInt32(), Is.EqualTo((int)AssetTypeEnum.IMAGE));
+            _mockLogic.Verify(l => l.GetNextAsset(), Times.Once());
+            _mockLogic.Verify(l => l.GetAssets(), Times.Once());
         }
 
         [Test]
@@ -229,6 +260,20 @@ namespace ImmichFrame.WebApi.Tests.Controllers
             // The client then fetches the same poster/preview as raw bytes.
             var bytes = await client.GetByteArrayAsync($"/api/Asset/{videoId}/Asset?assetType=IMAGE");
             Assert.That(bytes, Is.EqualTo(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }));
+        }
+
+        private static Mock<IImmichFrameLogic> CreateMockLogic()
+        {
+            var mock = new Mock<IImmichFrameLogic>();
+            mock.Setup(l => l.GetAsset(It.IsAny<Guid>(), It.IsAny<AssetTypeEnum?>(), It.IsAny<string?>()))
+                .ReturnsAsync((Guid id, AssetTypeEnum? type, string? _) => new AssetResponse
+                {
+                    FileName = $"{id}.{(type == AssetTypeEnum.VIDEO ? "mp4" : "jpg")}",
+                    ContentType = type == AssetTypeEnum.VIDEO ? "video/mp4" : "image/jpeg",
+                    FileStream = new MemoryStream(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }),
+                });
+            mock.Setup(l => l.SendWebhookNotification(It.IsAny<IWebhookNotification>())).Returns(Task.CompletedTask);
+            return mock;
         }
 
         private void SetupSearchAndThumbnail(AssetResponseDto asset)
