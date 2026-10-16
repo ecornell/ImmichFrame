@@ -6,6 +6,7 @@ using ImmichFrame.Core.Models;
 using ImmichFrame.WebApi.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace ImmichFrame.WebApi.Controllers
 {
@@ -29,12 +30,18 @@ namespace ImmichFrame.WebApi.Controllers
         private readonly ILogger<AssetController> _logger;
         private readonly IImmichFrameLogic _logic;
         private readonly IGeneralSettings _settings;
+        private readonly IMemoryCache _cache;
 
-        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings)
+        // Long enough to cover a client fetching the bytes (or retrying) right after choosing an
+        // asset, short enough not to swallow a genuine re-show of the same asset.
+        private static readonly TimeSpan WebhookDedupeWindow = TimeSpan.FromMinutes(1);
+
+        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings, IMemoryCache cache)
         {
             _logger = logger;
             _logic = logic;
             _settings = settings;
+            _cache = cache;
         }
 
         [HttpGet(Name = "GetAssets")]
@@ -103,10 +110,14 @@ namespace ImmichFrame.WebApi.Controllers
                 return StatusCode(StatusCodes.Status416RangeNotSatisfiable);
             }
 
-            if (string.IsNullOrEmpty(rangeHeader))
+            // One notification per asset shown. A plain image fetch is the "shown" event for the SPA;
+            // it is skipped when RandomImageAndInfo already notified for this asset and client, and
+            // for retries. Video streams never notify: their requests are ranged and repeated.
+            if (string.IsNullOrEmpty(rangeHeader) && assetType != AssetTypeEnum.VIDEO &&
+                asset.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+                !_cache.TryGetValue(WebhookKey(id, sanitizedClientIdentifier), out _))
             {
-                var notification = new AssetRequestedNotification(id, sanitizedClientIdentifier);
-                _ = _logic.SendWebhookNotification(notification);
+                NotifyAssetShown(id, sanitizedClientIdentifier);
             }
 
             Response.Headers["Accept-Ranges"] = "bytes";
@@ -153,14 +164,13 @@ namespace ImmichFrame.WebApi.Controllers
                     detail: includeVideos ? "No image or video asset was found" : "No image asset was found");
             }
 
-            // Clients that pass includeImage=false fetch the raw bytes from GetAsset with
-            // assetType=IMAGE, which also sends the webhook notification.
+            // Choosing the asset is the "shown" event for these clients, whether or not the image is
+            // inlined. With includeImage=false they fetch the bytes from GetAsset, which then
+            // does not notify again (see NotifyAssetShown).
             string randomImageBase64 = string.Empty;
             if (includeImage)
             {
                 var asset = await _logic.GetAsset(randomAsset.Id, AssetTypeEnum.IMAGE);
-                var notification = new AssetRequestedNotification(randomAsset.Id, sanitizedClientIdentifier);
-                _ = _logic.SendWebhookNotification(notification);
 
                 using (asset.Owner)
                 await using (asset.FileStream)
@@ -170,6 +180,8 @@ namespace ImmichFrame.WebApi.Controllers
                     randomImageBase64 = Convert.ToBase64String(memoryStream.ToArray());
                 }
             }
+
+            NotifyAssetShown(randomAsset.Id, sanitizedClientIdentifier);
 
             string thumbHashBase64 = string.Empty;
             using (var thumbhashImage = randomAsset.ThumbhashImage)
@@ -206,6 +218,16 @@ namespace ImmichFrame.WebApi.Controllers
                     ? randomAsset.Duration / 1000.0
                     : null
             };
+        }
+
+        private static (string, Guid, string) WebhookKey(Guid id, string clientIdentifier)
+            => ("AssetWebhook", id, clientIdentifier);
+
+        private void NotifyAssetShown(Guid id, string sanitizedClientIdentifier)
+        {
+            _cache.Set(WebhookKey(id, sanitizedClientIdentifier), true, WebhookDedupeWindow);
+            var notification = new AssetRequestedNotification(id, sanitizedClientIdentifier);
+            _ = _logic.SendWebhookNotification(notification);
         }
 
         // Batches beyond the first asset, used when the next asset is of a type the client can't show.

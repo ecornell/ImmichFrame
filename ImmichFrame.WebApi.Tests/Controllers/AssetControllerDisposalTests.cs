@@ -2,6 +2,7 @@ using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Models;
 using ImmichFrame.WebApi.Controllers;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NUnit.Framework;
@@ -39,7 +40,8 @@ public class AssetControllerDisposalTests
         settings.SetupGet(x => x.PhotoDateFormat).Returns("yyyy-MM-dd");
         settings.SetupGet(x => x.ImageLocationFormat).Returns("City,State,Country");
         var controller = new AssetController(
-            NullLogger<AssetController>.Instance, logic.Object, settings.Object);
+            NullLogger<AssetController>.Instance, logic.Object, settings.Object,
+            new MemoryCache(new MemoryCacheOptions()));
 
         var response = await controller.GetRandomImageAndInfo();
 

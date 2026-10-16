@@ -262,6 +262,56 @@ namespace ImmichFrame.WebApi.Tests.Controllers
             Assert.That(bytes, Is.EqualTo(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }));
         }
 
+        [Test]
+        public async Task Webhook_RandomImageAndInfoWithoutImage_NotifiesOnceIncludingByteFetch()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false&clientIdentifier=frame1");
+            response.EnsureSuccessStatusCode();
+            VerifyWebhooks(image.Id, Times.Once());
+
+            // The follow-up byte fetch (and a retry of it) is part of the same showing.
+            await client.GetByteArrayAsync($"/api/Asset/{image.Id}/Asset?assetType=IMAGE&clientIdentifier=frame1");
+            await client.GetByteArrayAsync($"/api/Asset/{image.Id}/Asset?assetType=IMAGE&clientIdentifier=frame1");
+            VerifyWebhooks(image.Id, Times.Once());
+        }
+
+        [Test]
+        public async Task Webhook_ImageFetch_NotifiesOncePerShowing()
+        {
+            // The SPA's path: GetAssets, then one GetAsset per image shown.
+            var id = Guid.NewGuid();
+            _mockLogic = CreateMockLogic();
+            var client = _factory.CreateClient();
+
+            await client.GetByteArrayAsync($"/api/Asset/{id}/Asset?assetType=IMAGE&clientIdentifier=spa");
+            await client.GetByteArrayAsync($"/api/Asset/{id}/Asset?assetType=IMAGE&clientIdentifier=spa");
+
+            VerifyWebhooks(id, Times.Once());
+        }
+
+        [Test]
+        public async Task Webhook_VideoRequest_DoesNotNotify()
+        {
+            var id = Guid.NewGuid();
+            _mockLogic = CreateMockLogic();
+            var client = _factory.CreateClient();
+
+            var bytes = await client.GetByteArrayAsync($"/api/Asset/{id}/Asset?assetType=VIDEO&clientIdentifier=spa");
+
+            Assert.That(bytes, Is.Not.Empty);
+            VerifyWebhooks(id, Times.Never());
+        }
+
+        private void VerifyWebhooks(Guid assetId, Times times)
+            => _mockLogic!.Verify(l => l.SendWebhookNotification(
+                It.Is<IWebhookNotification>(n => n is AssetRequestedNotification
+                    && ((AssetRequestedNotification)n).RequestedAssetId == assetId)), times);
+
         private static Mock<IImmichFrameLogic> CreateMockLogic()
         {
             var mock = new Mock<IImmichFrameLogic>();
