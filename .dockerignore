@@ -39,3 +39,11 @@ ImmichFrame.Android/
 ImmichFrame.Desktop/
 Makefile
 PrivacyPolicy.md
+# Secrets and runtime state: never bake these into an image.
+ImmichFrame.WebApi/Config/
+**/Settings.json
+**/Settings.yml
+**/Settings.yaml
+**/*.bak
+**/*.key
+**/*.env

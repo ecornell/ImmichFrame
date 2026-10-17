@@ -22,6 +22,9 @@
     <Content Update="wwwroot\custom.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Local Config/ holds Immich API keys and runtime state; keep it in the dev build output
+         but never in a published (Docker) build. -->
+    <Content Update="Config\**" CopyToPublishDirectory="Never" />
     <InternalsVisibleTo Include="ImmichFrame.WebApi.Tests" />
   </ItemGroup>
 

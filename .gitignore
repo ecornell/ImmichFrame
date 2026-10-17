@@ -458,3 +458,7 @@ $RECYCLE.BIN/
 ImmichFrame/Settings.json
 ImmichFrame.WebApi/Config/Settings.json
 ImmichFrame.WebApi/Config/ShownAssets.json
+ImmichFrame.WebApi/Config/Settings.*
+**/*.bak
+**/*.key
+.env
