@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { type AlbumResponseDto, type AssetResponseDto } from '$lib/immichFrameApi';
-	import { format } from 'date-fns';
+	import { safeFormat } from '$lib/date-format';
 	import * as locale from 'date-fns/locale';
 	import { configStore } from '$lib/stores/config.store';
 	import Icon from './icon.svelte';
@@ -55,7 +55,7 @@
 		(selectedLocale && locale[selectedLocale as keyof typeof locale]) || locale.enUS;
 	let formattedDate = $derived(
 		time
-			? format(time, $configStore.photoDateFormat ?? 'dd.MM.yyyy', { locale: localeToUse })
+			? safeFormat(time, $configStore.photoDateFormat, 'dd.MM.yyyy', { locale: localeToUse })
 			: null
 	);
 	let location = $derived(

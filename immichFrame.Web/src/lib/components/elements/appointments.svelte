@@ -1,7 +1,7 @@
 <script lang="ts">
 	import * as api from '$lib/index';
 	import { onMount } from 'svelte';
-	import { format } from 'date-fns';
+	import { safeFormat } from '$lib/date-format';
 	import { configStore } from '$lib/stores/config.store';
 	import { clientIdentifierStore } from '$lib/stores/persist.store';
 
@@ -12,15 +12,15 @@
 		let endDate = new Date(endTime);
 		let sameDay = startDate.getDate() == endDate.getDate();
 
-		let clockFormat = $configStore.clockFormat ?? 'HH:mm';
-		let clockDateFormat = $configStore.clockDateFormat ?? 'eee, MMM d';
-		let fullFormat = clockDateFormat + ' ' + clockFormat;
+		const time = (date: Date) => safeFormat(date, $configStore.clockFormat, 'HH:mm');
+		const full = (date: Date) =>
+			safeFormat(date, $configStore.clockDateFormat, 'eee, MMM d') + ' ' + time(date);
 
 		if (sameDay) {
-			return format(startDate, clockFormat) + ' - ' + format(endDate, clockFormat);
+			return time(startDate) + ' - ' + time(endDate);
 		}
 
-		return format(startDate, fullFormat) + ' - ' + format(endDate, fullFormat);
+		return full(startDate) + ' - ' + full(endDate);
 	}
 
 	let appointments: api.IAppointment[] = $state() as api.IAppointment[];
