@@ -106,7 +106,7 @@ public class AllAssetsPoolTests
         _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
         _mockAccountSettings.SetupGet(s => s.Rating).Returns(3);
         var returnedAssets = CreateSampleImageAssets(requestedImageCount, rating: rating);
-        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, rating: rating));
+        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, "video", rating: rating));
         _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(returnedAssets.Where(a => a.Type == AssetTypeEnum.IMAGE).ToList());
 
@@ -137,7 +137,7 @@ public class AllAssetsPoolTests
         _mockAccountSettings.SetupGet(s => s.ShowVideos).Returns(true);
         _mockAccountSettings.SetupGet(s => s.Rating).Returns(3);
         var returnedAssets = CreateSampleImageAssets(requestedImageCount, rating: rating);
-        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, rating: rating));
+        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, "video", rating: rating));
         _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(returnedAssets.ToList());
 
@@ -219,5 +219,53 @@ public class AllAssetsPoolTests
 
         // Verify that no excluded-album lookup happened since ExcludedAlbums is null
         _mockImmichApi.Verify(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<MetadataSearchDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+    [Test]
+    public async Task GetAssets_TopsUpWhenFiltersRemoveTheOnlyResult()
+    {
+        // A one-asset request whose random pick is in an excluded album must not come back empty.
+        var excludedAsset = new AssetResponseDto { Id = FixtureHelpers.GuidFor("excluded1"), Type = AssetTypeEnum.IMAGE };
+        var goodAssets = CreateSampleImageAssets(10, "good");
+
+        var excludedAlbumId = Guid.NewGuid();
+        _mockAccountSettings.SetupGet(s => s.ExcludedAlbums).Returns(new List<Guid> { excludedAlbumId });
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<MetadataSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto { Items = new List<AssetResponseDto> { excludedAsset }, Total = 1 } });
+        _mockImmichApi.SetupSequence(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AssetResponseDto> { excludedAsset })
+            .ReturnsAsync(new List<AssetResponseDto>(goodAssets) { excludedAsset });
+
+        var result = (await _allAssetsPool.GetAssets(1)).ToList();
+
+        Assert.That(result, Has.Count.EqualTo(1));
+        Assert.That(goodAssets.Select(a => a.Id), Does.Contain(result[0].Id));
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Size == 1), It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Size == 10), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public async Task GetAssets_StopsWhenServerHasNoMoreAssets()
+    {
+        // The library holds fewer assets than requested: one search is enough.
+        _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSampleImageAssets(3));
+
+        var result = (await _allAssetsPool.GetAssets(5)).ToList();
+
+        Assert.That(result, Has.Count.EqualTo(3));
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public async Task GetAssets_GivesUpAfterBoundedRounds()
+    {
+        // Every result is filtered out (unsupported type), so the pool returns empty after a few rounds.
+        _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RandomSearchDto d, CancellationToken _) => CreateSampleAssets(d.Size ?? 0, "audio", AssetTypeEnum.AUDIO));
+
+        var result = (await _allAssetsPool.GetAssets(1)).ToList();
+
+        Assert.That(result, Is.Empty);
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 }
