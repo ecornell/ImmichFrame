@@ -304,6 +304,114 @@ public class SettingsWriteTests
     }
 
     [Test]
+    public void Save_NewAccountWithApiKeyFile_IgnoresThePath()
+    {
+        var current = SettingsWith(new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKey = "existing-key"
+        });
+
+        // A caller-chosen path would be read on the next start and sent as the key to a caller-chosen server.
+        var update = new AdminSettingsUpdateDto
+        {
+            Version = 1,
+            General = new AdminGeneralSettingsDto(),
+            Accounts =
+            [
+                new AdminAccountUpdateDto { Index = 0, ImmichServerUrl = "http://immich.example.com:2283" },
+                new AdminAccountUpdateDto
+                {
+                    ImmichServerUrl = "http://attacker.example.com:2283",
+                    ApiKey = "",
+                    ApiKeyFile = "/etc/hostname"
+                }
+            ]
+        };
+
+        var candidate = AdminSettingsMapper.Apply(update, current);
+        var added = candidate.AccountsImpl.ElementAt(1);
+
+        added.ApiKey.Should().BeEmpty();
+        added.ApiKeyFile.Should().BeNull();
+        SettingsValidator.TryValidate(candidate, out var problems).Should().BeFalse();
+        problems.Should().Contain(p => p.Contains("ApiKey or ApiKeyFile"));
+    }
+
+    [Test]
+    public void Save_ChangedApiKeyFilePath_IsIgnored()
+    {
+        var existing = new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKeyFile = "/somewhere/immich.key",
+            ApiKey = "resolved-from-file"
+        };
+        existing.MarkApiKeyResolvedFromFile();
+        var current = SettingsWith(existing);
+
+        var update = new AdminSettingsUpdateDto
+        {
+            Version = 1,
+            General = new AdminGeneralSettingsDto(),
+            Accounts =
+            [
+                new AdminAccountUpdateDto
+                {
+                    Index = 0,
+                    ImmichServerUrl = "http://immich.example.com:2283",
+                    ApiKeyFile = "/etc/other-secret"
+                }
+            ]
+        };
+
+        var account = AdminSettingsMapper.Apply(update, current).AccountsImpl.Single();
+
+        account.ApiKeyFile.Should().BeNull();
+        account.ApiKey.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Save_KeepingTheConfiguredApiKeyFile_KeepsItsResolvedKey()
+    {
+        var existing = new ServerAccountSettings
+        {
+            ImmichServerUrl = "http://immich.example.com:2283",
+            ApiKeyFile = "/somewhere/immich.key",
+            ApiKey = "resolved-from-file"
+        };
+        existing.MarkApiKeyResolvedFromFile();
+        var current = SettingsWith(existing);
+
+        // Both the untouched form (null) and an explicit clear (empty) keep using the file's key, so
+        // probes and the live graph don't run with an empty key until the next restart.
+        foreach (var apiKey in new[] { null, "" })
+        {
+            var update = new AdminSettingsUpdateDto
+            {
+                Version = 1,
+                General = new AdminGeneralSettingsDto(),
+                Accounts =
+                [
+                    new AdminAccountUpdateDto
+                    {
+                        Index = 0,
+                        ImmichServerUrl = "http://immich.example.com:2283",
+                        ApiKey = apiKey,
+                        ApiKeyFile = "/somewhere/immich.key"
+                    }
+                ]
+            };
+
+            var account = AdminSettingsMapper.Apply(update, current).AccountsImpl.Single();
+
+            account.ApiKeyFile.Should().Be("/somewhere/immich.key");
+            account.ApiKey.Should().Be("resolved-from-file");
+            account.ApiKeyResolvedFromFile.Should().BeTrue();
+        }
+    }
+
+    [Test]
     public void MinimalGeneralBlock_ProducesDefaultsNotZeros()
     {
         var current = SettingsWith(new ServerAccountSettings

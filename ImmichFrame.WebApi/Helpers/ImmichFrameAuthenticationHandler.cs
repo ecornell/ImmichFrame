@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 
 public class ImmichFrameAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
@@ -46,7 +48,7 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
         {
             var token = authHeader.Substring("Bearer ".Length).Trim();
 
-            if (token == _authenticationSecret)
+            if (SecretMatches(token, _authenticationSecret))
             {
                 var claims = new[] { new Claim(ClaimTypes.NameIdentifier, "authenticatedUser") };
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
@@ -61,4 +63,8 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
 
         return Task.FromResult(AuthenticateResult.Fail("Invalid Authorization Header"));
     }
+
+    // Constant-time, so response timing doesn't reveal how much of a guessed secret was right.
+    private static bool SecretMatches(string token, string secret) =>
+        CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(token), Encoding.UTF8.GetBytes(secret));
 }

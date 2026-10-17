@@ -94,6 +94,16 @@ public static class AdminSettingsMapper
         var serverChanged = existing is not null &&
                             !SameServerUrl(dto.ImmichServerUrl, existing.ImmichServerUrl);
 
+        // The API may keep the ApiKeyFile an account already has, but never introduce or change one:
+        // a caller-chosen path would be read on the next start and its contents sent as X-API-KEY to
+        // a caller-chosen server, and the validator's existence check would reveal which paths exist.
+        var keptKeyFile = existing is not null && !serverChanged &&
+                          !string.IsNullOrWhiteSpace(existing.ApiKeyFile) &&
+                          (dto.ApiKeyFile is null ||
+                           string.Equals(dto.ApiKeyFile, existing.ApiKeyFile, StringComparison.Ordinal))
+            ? existing.ApiKeyFile
+            : null;
+
         if (serverChanged && string.IsNullOrWhiteSpace(dto.ApiKey))
         {
             // Never pair a retained or file-backed credential with a caller-supplied server.
@@ -102,24 +112,33 @@ public static class AdminSettingsMapper
             account.ApiKey = string.Empty;
             account.ApiKeyFile = null;
         }
-        else if (dto.ApiKey is null)
+        else if (string.IsNullOrEmpty(dto.ApiKey) && keptKeyFile is not null)
         {
-            // Untouched by the form: keep whatever the account already had, including the
-            // resolved-from-file state so the writer still knows not to persist the secret.
-            account.ApiKey = existing?.ApiKey ?? string.Empty;
-            account.ApiKeyFile = dto.ApiKeyFile ?? existing?.ApiKeyFile;
+            // Untouched (null) or cleared in favour of the file it already has (empty): keep the key
+            // resolved from that file, so probes and the live graph use it before the next restart,
+            // and mark it so the writer still knows not to persist the secret.
+            account.ApiKey = existing!.ApiKey;
+            account.ApiKeyFile = keptKeyFile;
 
-            if (existing?.ApiKeyResolvedFromFile == true &&
-                string.Equals(account.ApiKeyFile, existing.ApiKeyFile, StringComparison.Ordinal))
+            if (existing.ApiKeyResolvedFromFile)
             {
                 account.MarkApiKeyResolvedFromFile();
             }
         }
+        else if (dto.ApiKey is null)
+        {
+            // Untouched by the form: keep the account's literal key, if any. A key that came from a
+            // file is not carried over as a literal, which would write the secret into Settings.json.
+            account.ApiKey = existing is not null && string.IsNullOrWhiteSpace(existing.ApiKeyFile)
+                ? existing.ApiKey
+                : string.Empty;
+            account.ApiKeyFile = null;
+        }
         else if (dto.ApiKey.Length == 0)
         {
-            // Explicitly cleared — only valid alongside an ApiKeyFile, which the validator enforces.
+            // Explicitly cleared with no configured file to fall back on; the validator rejects it.
             account.ApiKey = string.Empty;
-            account.ApiKeyFile = dto.ApiKeyFile;
+            account.ApiKeyFile = null;
         }
         else
         {
