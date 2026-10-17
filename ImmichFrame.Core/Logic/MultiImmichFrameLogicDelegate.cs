@@ -61,7 +61,7 @@ public class MultiImmichFrameLogicDelegate : IImmichFrameLogic
     }
 
     public Task SendWebhookNotification(IWebhookNotification notification) =>
-        WebhookHelper.SendWebhookNotification(notification, _serverSettings.GeneralSettings.Webhook);
+        WebhookHelper.SendWebhookNotification(notification, _serverSettings.GeneralSettings.Webhook, _logger);
 }
 
 public static class AccountAndAssetExtensions
