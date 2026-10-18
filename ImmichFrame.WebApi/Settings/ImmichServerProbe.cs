@@ -32,7 +32,9 @@ public interface IImmichServerProbe
 /// This type never terminates the process — deciding what an incompatible server means is the
 /// caller's business. Startup still exits; a failed save just reports back to the user.
 /// </remarks>
-public sealed class ImmichServerProbe(IHttpClientFactory httpClientFactory) : IImmichServerProbe
+public sealed class ImmichServerProbe(
+    IHttpClientFactory httpClientFactory,
+    ILogger<ImmichServerProbe> logger) : IImmichServerProbe
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
 
@@ -64,7 +66,9 @@ public sealed class ImmichServerProbe(IHttpClientFactory httpClientFactory) : II
         }
         catch (Exception ex)
         {
-            return new AccountProbeResult(account.ImmichServerUrl, false, null, false, ex.Message);
+            logger.LogWarning(ex, "Could not reach Immich server {Server}", account.ImmichServerUrl);
+            return new AccountProbeResult(account.ImmichServerUrl, false, null, false,
+                ImmichErrorDescription.Describe(ex));
         }
     }
 

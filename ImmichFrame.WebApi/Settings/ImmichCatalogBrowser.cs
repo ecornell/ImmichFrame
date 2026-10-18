@@ -64,7 +64,7 @@ public sealed class ImmichCatalogBrowser(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Could not list albums/people/tags from {Server}", serverUrl);
-            return CatalogResult.Failed(ex.Message);
+            return CatalogResult.Failed(ImmichErrorDescription.Describe(ex));
         }
     }
 
