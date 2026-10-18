@@ -28,6 +28,11 @@
 
 	/** An account plus the local-only bits that never go over the wire as-is. */
 	type EditableAccount = AdminAccountViewDto & {
+		/**
+		 * Stable identity for the keyed list. Keying by position reused a removed account's fields
+		 * for the next one, carrying its typed IDs into the wrong account.
+		 */
+		uid: number;
 		/** Set only when the user chooses to replace the key; otherwise the key is left untouched. */
 		newApiKey?: string;
 		editingApiKey?: boolean;
@@ -48,6 +53,7 @@
 
 	let general = $state<AdminGeneralSettingsDto>({});
 	let accounts = $state<EditableAccount[]>([]);
+	let nextAccountUid = 0;
 
 	let problems = $state<string[]>([]);
 	let probeResults = $state<AccountProbeResultDto[]>([]);
@@ -100,7 +106,7 @@
 		canPersist = view.canPersist ?? true;
 		warnings = view.warnings ?? [];
 		general = { ...(view.general ?? {}) };
-		accounts = (view.accounts ?? []).map((a) => ({ ...a, catalog: null }));
+		accounts = (view.accounts ?? []).map((a) => ({ ...a, uid: nextAccountUid++, catalog: null }));
 
 		// Fetched in the background so a slow or unreachable Immich never holds up the form.
 		for (const account of accounts) loadCatalog(account);
@@ -153,6 +159,7 @@
 		accounts = [
 			...accounts,
 			{
+				uid: nextAccountUid++,
 				index: null as unknown as number,
 				immichServerUrl: '',
 				apiKeyIsSet: false,
@@ -449,7 +456,7 @@
 				title="Immich accounts"
 				description="Photos are drawn from every account, weighted by library size."
 			>
-				{#each accounts as account, i (i)}
+				{#each accounts as account, i (account.uid)}
 					<div class="settings-account py-4">
 						<div class="mb-2 flex items-center justify-between">
 							<h3 class="font-medium text-primary">

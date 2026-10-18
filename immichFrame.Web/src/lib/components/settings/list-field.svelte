@@ -10,11 +10,22 @@
 	// Kept as free text while editing so a trailing comma doesn't produce a phantom empty entry.
 	let text = $state(value.join(', '));
 
+	/** What we last pushed up, so an external change (a form reload) can be told apart from our own. */
+	let pushed: string[] = value;
+
+	$effect(() => {
+		if (value !== pushed) {
+			text = value.join(', ');
+			pushed = value;
+		}
+	});
+
 	function commit() {
 		value = text
 			.split(',')
 			.map((entry) => entry.trim())
 			.filter((entry) => entry.length > 0);
+		pushed = value;
 	}
 </script>
 

@@ -51,11 +51,22 @@
 	// Raw fallback, identical to the old comma-separated field, for when the list can't be fetched.
 	let text = $state(value.join(', '));
 
+	/** What we last pushed up, so an external change (a checkbox toggle or a form reload) can be told apart from our own. */
+	let pushed: string[] = value;
+
+	$effect(() => {
+		if (value !== pushed) {
+			text = value.join(', ');
+			pushed = value;
+		}
+	});
+
 	function commitText() {
 		value = text
 			.split(',')
 			.map((entry) => entry.trim())
 			.filter((entry) => entry.length > 0);
+		pushed = value;
 	}
 </script>
 
