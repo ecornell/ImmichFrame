@@ -16,6 +16,7 @@ make test-core          # dotnet test ImmichFrame.Core.Tests
 make test-webapi        # dotnet test ImmichFrame.WebApi.Tests
 make docs               # Docusaurus dev server for docs/
 make api                # regenerate the frontend API client (see "Generated API clients")
+make immich-spec        # refresh the Immich OpenAPI spec the C# client is generated from
 make docker-build-prod  # local production image (immichframe:local, linux/amd64, version from the csproj)
 ```
 
@@ -107,9 +108,9 @@ SvelteKit 5 + Tailwind, `adapter-static` with `ssr = false` and `prerender = tru
 
 ## Generated API clients
 
-Two generated layers, both committed to git — do not hand-edit either:
+Two generated layers — do not hand-edit either:
 
-- **C# → Immich**: `ImmichFrame.Core.csproj` has an `OpenApiReference` on `ImmichFrame.Core/OpenAPIs/immich-openapi-specs.json` (`SourceUri` points at immich `main`), NSwag-generated into `ImmichFrame.Core.Api.ImmichApi` at build time. Update the Immich API surface by refreshing that spec file. `Api/ImmichApi.cs` and `Api/AssetResponseDto.cs` are hand-written `partial` extensions of the generated types (custom constructor, ranged video playback, thumbhash) — those *are* editable.
+- **C# → Immich**: the `GenerateImmichApiClient` target in `ImmichFrame.Core.csproj` runs NSwag (`NSwag.MSBuild`) on `ImmichFrame.Core/OpenAPIs/immich-openapi-specs.json` before compiling, generating `ImmichFrame.Core.Api.ImmichApi` into `obj/immich-openapi-specsClient.cs` (not committed). Update the Immich API surface with `make immich-spec`, which downloads the spec from immich `main` (override `IMMICH_SPEC_URL` to pin a release), then rebuild. `Api/ImmichApi.cs` and `Api/AssetResponseDto.cs` are hand-written `partial` extensions of the generated types (custom constructor, ranged video playback, thumbhash) — those *are* editable.
 - **TS → ImmichFrame**: `immichFrame.Web/src/lib/immichFrameApi.ts` is oazapfts-generated from `openApi/swagger.json`. After changing any controller or DTO, run the API with `make dev` and then `make api`, which re-downloads `swagger.json` from the running Swagger endpoint and regenerates the client. Commit both files.
 
 ## Release Writeup Rule

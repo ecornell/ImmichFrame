@@ -4,23 +4,32 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
-  <ItemGroup>
-    <OpenApiReference Include="OpenAPIs\immich-openapi-specs.json" CodeGenerator="NSwagCSharp" Namespace="ImmichFrame.Core.Api" ClassName="ImmichApi" Options="/GenerateOptionalPropertiesAsNullable:true">
-      <SourceUri>https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json</SourceUri>
-    </OpenApiReference>
-  </ItemGroup>
+  <!-- Generates the Immich client (ImmichFrame.Core.Api.ImmichApi) from the committed spec at build
+       time. Refresh the spec with `make immich-spec`. -->
+  <PropertyGroup>
+    <ImmichApiSpec>$(MSBuildProjectDirectory)/OpenAPIs/immich-openapi-specs.json</ImmichApiSpec>
+    <ImmichApiClient>$(BaseIntermediateOutputPath)immich-openapi-specsClient.cs</ImmichApiClient>
+  </PropertyGroup>
+
+  <Target Name="GenerateImmichApiClient" BeforeTargets="CoreCompile" Inputs="$(ImmichApiSpec);$(MSBuildProjectFullPath)" Outputs="$(ImmichApiClient)">
+    <Exec Command="$(NSwagExe_Net100) openapi2csclient /className:ImmichApi /namespace:ImmichFrame.Core.Api /input:&quot;$(ImmichApiSpec)&quot; /output:&quot;$(ImmichApiClient)&quot; /GenerateOptionalPropertiesAsNullable:true" />
+  </Target>
+
+  <Target Name="IncludeImmichApiClient" BeforeTargets="CoreCompile" AfterTargets="GenerateImmichApiClient">
+    <ItemGroup>
+      <Compile Remove="$(ImmichApiClient)" />
+      <Compile Include="$(ImmichApiClient)" />
+      <FileWrites Include="$(ImmichApiClient)" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="BloomFilter.NetCore" />
     <PackageReference Include="Ical.Net" />
-    <PackageReference Include="Microsoft.Extensions.ApiDescription.Client">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Newtonsoft.Json" />
-    <PackageReference Include="NSwag.ApiDescription.Client">
+    <PackageReference Include="NSwag.MSBuild">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>

@@ -22,6 +22,11 @@ api:
 	curl http://localhost:5217/swagger/v1/swagger.json -o ./openApi/swagger.json
 	npm --prefix immichFrame.Web run api
 
+# Refresh the Immich OpenAPI spec the C# client is generated from (regenerated on the next build).
+IMMICH_SPEC_URL ?= https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json
+immich-spec:
+	curl -fsSL $(IMMICH_SPEC_URL) -o ./ImmichFrame.Core/OpenAPIs/immich-openapi-specs.json
+
 
 # Local single-platform build of the production image. Override e.g. PLATFORM=linux/arm64 or
 # IMAGE=immichframe:custom; set NO_CACHE=--no-cache for a clean rebuild.
