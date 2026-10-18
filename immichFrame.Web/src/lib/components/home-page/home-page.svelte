@@ -1,6 +1,7 @@
 <script lang="ts">
 	import * as api from '$lib/index';
 	import { oldestRepeat } from '$lib/asset-selection';
+	import { isBirthdayToday } from '$lib/birthday';
 	import ProgressBar from '$lib/components/elements/progress-bar.svelte';
 	import { slideshowStore } from '$lib/stores/slideshow.store';
 	import { clientIdentifierStore, authSecretStore } from '$lib/stores/persist.store';
@@ -438,21 +439,10 @@
 	}
 
 	function hasBirthday(assets: api.AssetResponseDto[]) {
-		let today = new Date();
-		let hasBday: boolean = false;
-
-		for (let asset of assets) {
-			for (let person of asset.people ?? []) {
-				let birthdate = new Date(person.birthDate ?? '');
-				if (birthdate.getDate() === today.getDate() && birthdate.getMonth() === today.getMonth()) {
-					hasBday = true;
-					break;
-				}
-			}
-			if (hasBday) break;
-		}
-
-		return hasBday;
+		const today = new Date();
+		return assets.some((asset) =>
+			(asset.people ?? []).some((person) => isBirthdayToday(person.birthDate, today))
+		);
 	}
 
 	function updateCurrentDuration(assets: api.AssetResponseDto[]) {
