@@ -20,7 +20,10 @@
 		assetPromiseKeysToRemove,
 		ConsecutiveMediaFailures,
 		fatalMediaErrorAfterCandidate,
+		retryDelay,
 		transitionIsCurrent,
+		untilAborted,
+		WATCHDOG_ABORT,
 		withObjectUrlCleanup
 	} from '$lib/recovery';
 
@@ -36,6 +39,8 @@
 
 	const PRELOAD_ASSETS = 5;
 	const TRANSITION_WATCHDOG_MS = 10000;
+	// A slow download outlives the watchdog (so a retry can reuse it) but not this.
+	const ASSET_LOAD_TIMEOUT_MS = 60000;
 	const VIDEO_STALL_MS = 15000;
 	const CURSOR_HIDE_MS = 2000;
 	const RETRY_ON_ERROR_MS = 5000;
@@ -125,19 +130,33 @@
 		const ensurePromise = (asset: api.AssetResponseDto, cancelWithTransition: boolean) => {
 			let controller = assetPromiseControllers[asset.id];
 			if (!(asset.id in assetPromisesDict)) {
-				controller = new AbortController();
-				assetPromiseControllers[asset.id] = controller;
-				const promise = loadAsset(asset, controller.signal);
+				const assetController = new AbortController();
+				controller = assetController;
+				assetPromiseControllers[asset.id] = assetController;
+				const promise = loadAsset(asset, assetController.signal);
 				assetPromisesDict[asset.id] = promise;
-				promise.catch(() => {
-					if (assetPromisesDict[asset.id] === promise) {
-						delete assetPromisesDict[asset.id];
-						delete assetPromiseControllers[asset.id];
+				const timeout = window.setTimeout(() => assetController.abort(), ASSET_LOAD_TIMEOUT_MS);
+				promise.then(
+					() => clearTimeout(timeout),
+					() => {
+						clearTimeout(timeout);
+						if (assetPromisesDict[asset.id] === promise) {
+							delete assetPromisesDict[asset.id];
+							delete assetPromiseControllers[asset.id];
+						}
 					}
-				});
+				);
 			}
 			if (cancelWithTransition && signal) {
-				signal.addEventListener('abort', () => controller?.abort(), { once: true });
+				// A watchdog timeout ends the transition but leaves the download running, so the
+				// retry picks up where it is instead of restarting it from zero on a slow link.
+				signal.addEventListener(
+					'abort',
+					() => {
+						if (signal.reason !== WATCHDOG_ABORT) controller?.abort();
+					},
+					{ once: true }
+				);
 			}
 		};
 
@@ -266,6 +285,8 @@
 	}
 
 	let isHandlingAssetTransition = $state(false);
+	let recoveryAttempts = 0;
+	let nextRecoveryAt = 0;
 	let transitionEpoch = 0;
 	let pendingTransition: { previous: boolean; instant: boolean } | null = $state(null);
 
@@ -285,9 +306,9 @@
 		watchdogTimer = window.setTimeout(() => {
 			if (transitionIsCurrent(currentEpoch, transitionEpoch, controller.signal)) {
 				console.error('Transition watchdog triggered: aborting stalled requests');
+				// The recovery interval retries with backoff; retrying here at once would loop.
 				markConnectionUnavailable();
-				pendingTransition ??= { previous: false, instant: true };
-				controller.abort();
+				controller.abort(WATCHDOG_ABORT);
 			}
 		}, TRANSITION_WATCHDOG_MS);
 
@@ -348,7 +369,7 @@
 		nextHistory = nextHistory.slice(-MAX_ASSET_HISTORY);
 
 		await updateAssetPromises(next, nextBacklog, signal);
-		const nextState = await pickAssets(next);
+		const nextState = await pickAssets(next, signal);
 		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
 		if (!nextState.loaded) {
 			markConnectionUnavailable();
@@ -363,6 +384,8 @@
 		error = false;
 		offline = false;
 		authError = false;
+		recoveryAttempts = 0;
+		nextRecoveryAt = 0;
 		recordRecentAssets(next);
 	}
 
@@ -378,7 +401,7 @@
 			: [...assetBacklog];
 
 		await updateAssetPromises(next, nextBacklog, signal);
-		const nextState = await pickAssets(next);
+		const nextState = await pickAssets(next, signal);
 		if (!transitionIsCurrent(epoch, transitionEpoch, signal) || !nextState.loaded) return;
 
 		assetHistory = nextHistory;
@@ -456,14 +479,14 @@
 		return duration / 1000; // milliseconds → seconds
 	}
 
-	async function pickAssets(assets: api.AssetResponseDto[]) {
+	async function pickAssets(assets: api.AssetResponseDto[], signal?: AbortSignal) {
 		let newAssets = [];
 		try {
 			updateCurrentDuration(assets);
 			for (let asset of assets) {
 				const promise = assetPromisesDict[asset.id];
 				if (!promise) throw new Error(`Missing preload promise for asset ${asset.id}`);
-				newAssets.push(await promise);
+				newAssets.push(await untilAborted(promise, signal));
 			}
 			return {
 				assets: newAssets,
@@ -591,8 +614,15 @@
 		window.addEventListener('click', showCursor);
 
 		// Retry API work in place so an outage does not discard the last rendered photo.
+		// Backs off (2 s doubling to 30 s) so a server that stays slow isn't hammered.
 		retryInterval = window.setInterval(() => {
-			if ((error || offline) && !authError && !isHandlingAssetTransition) {
+			if (
+				(error || offline) &&
+				!authError &&
+				!isHandlingAssetTransition &&
+				Date.now() >= nextRecoveryAt
+			) {
+				nextRecoveryAt = Date.now() + retryDelay(recoveryAttempts++);
 				handleDone(false, true).catch((caught) =>
 					console.error('Recovery transition failed:', caught)
 				);

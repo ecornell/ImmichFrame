@@ -6,6 +6,8 @@ import {
 	fatalMediaErrorAfterCandidate,
 	retryDelay,
 	transitionIsCurrent,
+	untilAborted,
+	WATCHDOG_ABORT,
 	withObjectUrlCleanup
 } from '../src/lib/recovery.ts';
 
@@ -73,4 +75,31 @@ test('abort after image fetch revokes its object URL', async () => {
 		{ name: 'AbortError' }
 	);
 	assert.deepEqual(revoked, ['blob:image']);
+});
+
+test('a watchdog abort ends the wait but leaves the download reusable', async () => {
+	let finish!: (value: string) => void;
+	const download = new Promise<string>((resolve) => (finish = resolve));
+	const transition = new AbortController();
+
+	const waiting = untilAborted(download, transition.signal);
+	transition.abort(WATCHDOG_ABORT);
+	await assert.rejects(waiting, { name: 'AbortError' });
+
+	// The retry awaits the same in-flight download instead of starting over.
+	const retry = new AbortController();
+	const retried = untilAborted(download, retry.signal);
+	finish('blob:photo');
+	assert.equal(await retried, 'blob:photo');
+});
+
+test('untilAborted passes results and failures through', async () => {
+	const signal = new AbortController().signal;
+	assert.equal(await untilAborted(Promise.resolve(1), signal), 1);
+	await assert.rejects(untilAborted(Promise.reject(new Error('boom')), signal), /boom/);
+	assert.equal(await untilAborted(Promise.resolve(2)), 2);
+
+	const aborted = new AbortController();
+	aborted.abort();
+	await assert.rejects(untilAborted(Promise.resolve(3), aborted.signal), { name: 'AbortError' });
 });

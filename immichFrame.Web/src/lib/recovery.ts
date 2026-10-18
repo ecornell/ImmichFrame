@@ -58,3 +58,32 @@ export class ConsecutiveMediaFailures {
 		return this.#count;
 	}
 }
+
+/** Abort reason used by the transition watchdog, so in-flight downloads can tell it apart. */
+export const WATCHDOG_ABORT = 'transition-watchdog';
+
+/**
+ * Waits for `promise`, but gives up with an AbortError as soon as `signal` aborts — without
+ * cancelling the underlying work, which keeps running and can be awaited again later.
+ */
+export function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+	if (!signal) return promise;
+
+	const aborted = () => new DOMException('The transition was aborted.', 'AbortError');
+	if (signal.aborted) return Promise.reject(aborted());
+
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => reject(aborted());
+		signal.addEventListener('abort', onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener('abort', onAbort);
+				resolve(value);
+			},
+			(error) => {
+				signal.removeEventListener('abort', onAbort);
+				reject(error);
+			}
+		);
+	});
+}
