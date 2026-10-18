@@ -9,20 +9,23 @@ on:
   push:
     tags:
       - "v*"  # Only triggers on versioned tags, e.g., v1.0, v20.15.10
-  # Build (never push) every platform on PRs, so a broken image shows up before a release tag.
-  pull_request:
+    # Build (never publish) every platform on main, so a broken image shows up before a release
+    # tag. Changes land by direct merge, not PRs. Path filters are not applied to tag pushes.
+    branches:
+      - main
     paths-ignore:
       - "docs/**"
       - "**/*.md"
 
-# A newer push to the same PR supersedes its running build; tag and manual runs always finish.
+# A newer push to main supersedes its running build; tag and manual runs always finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref_type == 'branch' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}
 
 permissions:
   packages: write
@@ -44,9 +47,9 @@ jobs:
         with:
           install: true
 
-      # Login to GHCR (or other registry) except on PRs
+      # Only tags and manual runs publish, so only they log in.
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -69,14 +72,14 @@ jobs:
             echo "VERSION=${{ github.event.inputs.version || '1.0.0.0' }}" >> $GITHUB_OUTPUT
           fi
 
-      # Build and push Docker image for multiple platforms (build only on PRs)
+      # Build every platform; push only for tags and manual runs.
       - name: Build and push Docker image (${{ env.IMAGE_NAME }})
         uses: docker/build-push-action@v6
         with:
           context: .
           target: final
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Reuse layers (notably the dotnet restore and npm ci layers) across runs.

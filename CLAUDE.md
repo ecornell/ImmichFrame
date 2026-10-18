@@ -39,7 +39,18 @@ npm run build    # static build into immichFrame.Web/build (copied to wwwroot in
 
 `make dev` launches the SPA dev server automatically via `Microsoft.AspNetCore.SpaProxy` (`SpaProxyLaunchCommand` in `ImmichFrame.WebApi.csproj`), so running `npm run dev` separately is only needed when working on the frontend alone.
 
-CI (`.github/workflows/test.yml`) runs only the two `dotnet test` projects — there are no frontend tests. Every PR must carry at least one label (`.github/workflows/pr-require-label.yml`), and labels drive changelog categories in `.github/release.yml`.
+CI (`.github/workflows/test.yml`) runs on every push: the two `dotnet test` projects, the frontend (`npm run check`, `lint`, `test`, `build`) and the deployment-script tests (`make test-ops`). `build-docker.yml` builds every image platform on pushes to `main` without publishing; only `v*` tags and manual runs publish to GHCR. GitHub disables Actions on forks by default, so none of this runs until Actions is enabled in the repository settings.
+
+## Change workflow
+
+This repository is a fork (`ecornell/ImmichFrame`) and does not use pull requests. Do not open PRs, and do not suggest PR or compare URLs: on a fork GitHub's PR page can default to the public upstream `immichFrame/ImmichFrame` as the base, which would publish the change and its description there. Pushing to `upstream` is disabled.
+
+1. Do each change on a short-lived local branch, with tests.
+2. Before landing, run the backend tests and the frontend `check`, `lint`, `test` and `build`.
+3. Land it by rebasing or cherry-picking onto `main` so history stays linear, then push `main` to `origin`.
+4. Delete the merged branch locally and on `origin`.
+
+The PR label check (`pr-require-label.yml`) and the label-based categories in `.github/release.yml` are inherited from upstream and do not apply here.
 
 ## Production operations
 
@@ -109,7 +120,7 @@ When asked to create a release writeup or release notes, follow this process and
 
 1. Run `git log --oneline <prev-tag>..HEAD` to get all commits since the last release.
 2. Run `git diff <prev-tag>..HEAD --stat` to understand the scope of changes.
-3. Fetch the GitHub release page if a URL is provided to cross-reference the auto-generated changelog.
+3. Fetch the GitHub release page if a URL is provided to cross-reference the auto-generated changelog. Changes landed by direct merge have no PR, so they will not appear in it; the git log is the source of truth.
 4. Combine the raw git history with the GitHub changelog to produce a human-friendly writeup.
 
 ### Output Format
@@ -121,7 +132,7 @@ Use the template at `templates/release-template.md`. Key rules:
 - **Sections**: Follow the category order from `.github/release.yml` — Breaking Changes, New Features, Fixes, Documentation, Maintenance, Other Changes.
 - **Each entry**:
   - H4 heading with emoji + feature name
-  - Bold `**PR [#NNN](url) by @author**` attribution line
+  - Bold `**PR [#NNN](url) by @author**` attribution line (for changes landed without a PR, link the commit instead: `**Commit [abc1234](url) by @author**`)
   - 2–4 sentences describing *what* changed and *why it matters* to the user
   - Include a code block if a config snippet helps illustrate usage
   - Separate entries with `---`
