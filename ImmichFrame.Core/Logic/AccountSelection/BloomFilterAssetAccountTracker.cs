@@ -70,7 +70,8 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
             }
         }
 
-        _logger.LogError("Failed to locate account for asset {assetId}", assetId);
+        // Callers fall back to asking every account, and log if that fails too.
+        _logger.LogDebug("No tracked account for asset {assetId}", assetId);
         throw new AssetNotFoundException();
     }
 }

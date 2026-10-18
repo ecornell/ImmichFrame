@@ -1,6 +1,7 @@
 using Moq;
 using NUnit.Framework;
 using ImmichFrame.Core.Api;
+using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Logic.AccountSelection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -111,5 +112,54 @@ namespace ImmichFrame.Core.Tests.Logic.AccountSelection
             Assert.That(result!.Value.Item2.Id, Is.EqualTo(asset.Id));
             _mockTracker.Verify(t => t.RecordAssetLocation(account.Object, asset.Id), Times.Once);
         }
-    }
+    
+
+        private static ApiException ApiError(int statusCode)
+            => new("error", statusCode, "", new Dictionary<string, IEnumerable<string>>(), null!);
+
+        private void TrackerKnowsNothing() =>
+            _mockTracker
+                .Setup(t => t.ForAssetAsync(It.IsAny<Guid>(), It.IsAny<Func<IAccountImmichFrameLogic, Task<string>>>()))
+                .ThrowsAsync(new AssetNotFoundException());
+
+        [Test]
+        public async Task ForAssetAsync_UntrackedAsset_AsksEachAccountAndRecordsTheOwner()
+        {
+            // E.g. an id the client queued before a restart.
+            TrackerKnowsNothing();
+            var assetId = Guid.NewGuid();
+            var other = CreateAccount(10, []);
+            var owner = CreateAccount(10, []);
+            var strategy = CreateStrategy(other.Object, owner.Object);
+
+            var result = await strategy.ForAssetAsync(assetId,
+                logic => logic == other.Object ? throw ApiError(404) : Task.FromResult("found"));
+
+            Assert.That(result, Is.EqualTo("found"));
+            _mockTracker.Verify(t => t.RecordAssetLocation(owner.Object, assetId), Times.Once);
+            _mockTracker.Verify(t => t.RecordAssetLocation(other.Object, assetId), Times.Never);
+        }
+
+        [Test]
+        public void ForAssetAsync_UntrackedAndInNoAccount_Throws()
+        {
+            TrackerKnowsNothing();
+            var strategy = CreateStrategy(CreateAccount(10, []).Object, CreateAccount(10, []).Object);
+
+            Assert.ThrowsAsync<AssetNotFoundException>(() =>
+                strategy.ForAssetAsync<string>(Guid.NewGuid(), _ => throw ApiError(400)));
+        }
+
+        [Test]
+        public void ForAssetAsync_UntrackedAsset_OtherErrorsPropagate()
+        {
+            // A 500 (or 416 for a bad Range) is a real answer, not "try the next account".
+            TrackerKnowsNothing();
+            var strategy = CreateStrategy(CreateAccount(10, []).Object);
+
+            var thrown = Assert.ThrowsAsync<ApiException>(() =>
+                strategy.ForAssetAsync<string>(Guid.NewGuid(), _ => throw ApiError(500)));
+            Assert.That(thrown!.StatusCode, Is.EqualTo(500));
+        }
+}
 }

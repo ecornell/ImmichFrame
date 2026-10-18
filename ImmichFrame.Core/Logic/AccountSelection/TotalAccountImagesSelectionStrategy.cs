@@ -1,4 +1,5 @@
 using ImmichFrame.Core.Api;
+using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -91,6 +92,45 @@ public class TotalAccountImagesSelectionStrategy(
         return assets;
     }
 
-    public Task<T> ForAssetAsync<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
-        => _tracker.ForAssetAsync(assetId, f);
+    public async Task<T> ForAssetAsync<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
+    {
+        try
+        {
+            return await _tracker.ForAssetAsync(assetId, f);
+        }
+        catch (AssetNotFoundException)
+        {
+            // The tracker only knows assets served by this process and settings generation, so a
+            // client still holding ids from before a restart or a settings save lands here. Ask
+            // every account instead; with a single account this always finds it.
+        }
+
+        foreach (var account in _accounts)
+        {
+            T result;
+            try
+            {
+                result = await f(account);
+            }
+            catch (ApiException e) when (e.StatusCode is 400 or 404)
+            {
+                // Same rule as the tracker: 400/404 means "not in this account", anything else is real.
+                continue;
+            }
+
+            try
+            {
+                await _tracker.RecordAssetLocation(account, assetId);
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "Could not record the account for asset {assetId}", assetId);
+            }
+
+            return result;
+        }
+
+        _logger.LogError("Failed to locate account for asset {assetId}", assetId);
+        throw new AssetNotFoundException();
+    }
 }
