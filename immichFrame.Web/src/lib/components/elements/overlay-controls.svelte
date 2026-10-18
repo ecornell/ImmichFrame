@@ -31,8 +31,10 @@
 		showInfo
 	}: Props = $props();
 
-	function shortcuts(node: any, shortcutList: any[]) {
-		function handleKeyDown(event: { key: any; preventDefault: () => void }) {
+	type Shortcut = { key: string; action?: () => void };
+
+	function shortcuts(node: Window, shortcutList: Shortcut[]) {
+		function handleKeyDown(event: KeyboardEvent) {
 			const shortcut = shortcutList.find((s) => s.key === event.key);
 			if (shortcut && shortcut.action) {
 				event.preventDefault();

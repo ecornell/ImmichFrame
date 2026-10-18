@@ -55,7 +55,7 @@
 	>
 		<!-- <div class="text-4xl mx-8 font-bold">Appointments</div> -->
 		<div class="">
-			{#each appointments as appointment}
+			{#each appointments as appointment, i (i)}
 				<div class="bg-gray-600 bg-opacity-90 mb-2 text-left rounded-md p-3">
 					<p class="text-xs">
 						{formatDates(appointment.startTime ?? '', appointment.endTime ?? '')}

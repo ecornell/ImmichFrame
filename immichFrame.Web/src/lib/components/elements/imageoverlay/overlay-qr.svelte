@@ -14,9 +14,12 @@
 >
 	<QrCode data={imageUrl} isResponsive />
 </div>
+<!-- An external Immich link, not an app route, so resolve() doesn't apply. -->
+<!-- eslint-disable svelte/no-navigation-without-resolve -->
 <a
 	href={imageUrl}
 	target="_blank"
 	class="info-overlay-openimmich text-xl w-fit self-center rounded-md p-2 m-2 text-center text-secondary bg-primary"
 	>Open in immich</a
 >
+<!-- eslint-enable svelte/no-navigation-without-resolve -->

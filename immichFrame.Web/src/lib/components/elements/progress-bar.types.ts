@@ -1,9 +1,9 @@
 export enum ProgressBarStatus {
-    Playing = 'playing',
-    Paused = 'paused'
+	Playing = 'playing',
+	Paused = 'paused'
 }
 
 export enum ProgressBarLocation {
-    Top = 'top',
-    Bottom = 'bottom'
+	Top = 'top',
+	Bottom = 'bottom'
 }

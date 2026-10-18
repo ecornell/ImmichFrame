@@ -71,6 +71,8 @@
 	let videoElement = $state<HTMLVideoElement | null>(null);
 
 	$effect(() => {
+		// Read only to re-run this cleanup when the asset changes.
+		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 		asset[0];
 		return () => {
 			if (videoElement) {
@@ -222,7 +224,7 @@
 			--pan-end-y: {panDirection === 'up' ? '-5%' : panDirection === 'down' ? '5%' : '0'};"
 	>
 		{#if debug}
-			{#each asset[2]?.map((x) => x.person?.name) ?? [] as _, i}
+			{#each asset[2] ?? [] as face, i (face.id)}
 				<div
 					class="face z-[900] bg-red-600 absolute"
 					style="top: {getFaceMetric(i, 'y1')}%;

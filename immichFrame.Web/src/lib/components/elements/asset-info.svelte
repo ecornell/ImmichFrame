@@ -27,11 +27,11 @@
 		showPeopleDesc,
 		showTagsDesc,
 		showAlbumName,
-		split,
+		split
 	}: Props = $props();
 
 	function formatLocation(format: string, city?: string, state?: string, country?: string) {
-		const locationParts: Array<string> = new Array();
+		const locationParts: string[] = [];
 
 		format.split(',').forEach((part) => {
 			const trimmedPart = part.trim().toLowerCase();
@@ -93,19 +93,25 @@
 		{#if showAlbumName && albums && albums.length > 0}
 			<p id="imagealbums" class="info-item">
 				<Icon path={mdiImageAlbum} />
-				<span class="info-text" class:short-text={split}>{albums.map((x) => x.albumName).join(', ')}</span>
+				<span class="info-text" class:short-text={split}
+					>{albums.map((x) => x.albumName).join(', ')}</span
+				>
 			</p>
 		{/if}
 		{#if showPeopleDesc && availablePeople && availablePeople.length > 0}
 			<p id="peopledescription" class="info-item">
 				<Icon path={mdiAccount} />
-				<span class="info-text" class:short-text={split}>{availablePeople.map((x) => x.name).join(', ')}</span>
+				<span class="info-text" class:short-text={split}
+					>{availablePeople.map((x) => x.name).join(', ')}</span
+				>
 			</p>
 		{/if}
 		{#if showTagsDesc && availableTags && availableTags.length > 0}
 			<p id="tagsdescription" class="info-item">
 				<Icon path={mdiTag} />
-				<span class="info-text" class:short-text={split}>{availableTags.map((x) => x.name).join(', ')}</span>
+				<span class="info-text" class:short-text={split}
+					>{availableTags.map((x) => x.name).join(', ')}</span
+				>
 			</p>
 		{/if}
 		{#if showLocation && location}

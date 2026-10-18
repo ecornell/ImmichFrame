@@ -81,11 +81,7 @@
 					/>
 				{/if}
 				{#if availableTags && availableTags.length > 0}
-					<OverlayItem
-						icon={mdiTag}
-						header="Tags"
-						items={availableTags.map((x) => x.name)}
-					/>
+					<OverlayItem icon={mdiTag} header="Tags" items={availableTags.map((x) => x.name)} />
 				{/if}
 				{#if albums && albums.length > 0}
 					<OverlayItem icon={mdiImageAlbum} header="Album" items={albums.map((x) => x.albumName)} />

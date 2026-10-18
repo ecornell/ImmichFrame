@@ -49,7 +49,7 @@ export const setBaseUrl = (baseUrl: string) => {
 
 export const setBearer = () => {
 	defaults.headers = defaults.headers || {};
-	defaults.headers['Authorization'] = "Bearer " + get(authSecretStore);
+	defaults.headers['Authorization'] = 'Bearer ' + get(authSecretStore);
 };
 
 export const getAssetStreamUrl = (id: string, clientIdentifier?: string, assetType?: number) => {
