@@ -11,12 +11,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
     - name: Run Core tests
       run: dotnet test ImmichFrame.Core.Tests/ImmichFrame.Core.Tests.csproj
     - name: Run WebApi tests
       run: dotnet test ImmichFrame.WebApi.Tests/ImmichFrame.WebApi.Tests.csproj
+
+  # The same frontend gate deploy-prod.sh runs locally, plus lint.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: immichFrame.Web
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: immichFrame.Web/.nvmrc
+        cache: npm
+        cache-dependency-path: immichFrame.Web/package-lock.json
+    - run: npm ci
+    - name: Typecheck
+      run: npm run check
+    - name: Lint
+      run: npm run lint
+    - name: Unit tests
+      run: npm test
+    - name: Build
+      run: npm run build
+
+  # Syntax-checks the deployment scripts and runs their mocked regression tests.
+  ops-scripts:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Test deployment scripts
+      run: make test-ops
