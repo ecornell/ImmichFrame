@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-ImmichFrame turns an [Immich](https://immich.app/) photo server into a digital photo frame. It is a single deployable: an ASP.NET Core 8 Web API (`ImmichFrame.WebApi`) that serves a pre-built SvelteKit SPA from `wwwroot` and proxies/curates assets from one or more Immich servers. Docs at `docs/` are a separate Docusaurus site published to GitHub Pages.
+ImmichFrame turns an [Immich](https://immich.app/) photo server into a digital photo frame. It is a single deployable: an ASP.NET Core 10 Web API (`ImmichFrame.WebApi`) that serves a pre-built SvelteKit SPA from `wwwroot` and proxies/curates assets from one or more Immich servers. Docs at `docs/` are a separate Docusaurus site published to GitHub Pages.
 
 ## Commands
 
