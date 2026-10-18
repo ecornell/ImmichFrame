@@ -1,8 +1,11 @@
+# Builds and runs the production image from this checkout: docker compose -f docker/docker-compose.dev.yml up --build
 services:
   immichframe:
     build:
       context: ..
-      target: dev
+      target: final
+      args:
+        VERSION: 0.0.0.0
     ports:
       - 8080:8080
     env_file:

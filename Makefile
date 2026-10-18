@@ -23,9 +23,16 @@ api:
 	npm --prefix immichFrame.Web run api
 
 
+# Local single-platform build of the production image. Override e.g. PLATFORM=linux/arm64 or
+# IMAGE=immichframe:custom; set NO_CACHE=--no-cache for a clean rebuild.
+VERSION ?= $(shell sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' ImmichFrame.WebApi/ImmichFrame.WebApi.csproj)
+PLATFORM ?= linux/amd64
+IMAGE ?= immichframe:local
+NO_CACHE ?=
+
 docker-build-prod:
-	docker buildx build --platform linux/amd64 --no-cache . --target final -t ghcr.io/immichframe/immichframe:latest --build-arg VERSION=1.0.0.0
-	
+	docker buildx build --platform $(PLATFORM) $(NO_CACHE) --load . --target final -t $(IMAGE) --build-arg VERSION=$(VERSION)
+
 docker-prod:
 	docker compose -f ./docker/docker-compose.yml up --build -V --remove-orphans
 
