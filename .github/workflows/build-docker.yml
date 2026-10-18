@@ -27,12 +27,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}
 
-permissions:
-  packages: write
-
 jobs:
   publish_images:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -87,3 +87,38 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
+
+  # Publish the GitHub release only once every image is pushed, so a release never lacks its image.
+  release:
+    needs: publish_images
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      discussions: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Changes land without PRs, so GitHub's generated notes would be empty: list the commits.
+      - name: Write release notes from the git log
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          range=${previous:+$previous..}$GITHUB_REF_NAME
+          {
+            echo "## Changes"
+            echo
+            git log --no-merges --format='- %s (%h)' "$range"
+            if [ -n "$previous" ]; then
+              echo
+              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${previous}...${GITHUB_REF_NAME}"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md

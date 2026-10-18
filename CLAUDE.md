@@ -16,7 +16,7 @@ make test-core          # dotnet test ImmichFrame.Core.Tests
 make test-webapi        # dotnet test ImmichFrame.WebApi.Tests
 make docs               # Docusaurus dev server for docs/
 make api                # regenerate the frontend API client (see "Generated API clients")
-make docker-build-prod  # multi-arch production image build
+make docker-build-prod  # local production image (immichframe:local, linux/amd64, version from the csproj)
 ```
 
 Run a single test (NUnit):
@@ -39,7 +39,7 @@ npm run build    # static build into immichFrame.Web/build (copied to wwwroot in
 
 `make dev` launches the SPA dev server automatically via `Microsoft.AspNetCore.SpaProxy` (`SpaProxyLaunchCommand` in `ImmichFrame.WebApi.csproj`), so running `npm run dev` separately is only needed when working on the frontend alone.
 
-CI (`.github/workflows/test.yml`) runs on every push: the two `dotnet test` projects, the frontend (`npm run check`, `lint`, `test`, `build`) and the deployment-script tests (`make test-ops`). `build-docker.yml` builds every image platform on pushes to `main` without publishing; only `v*` tags and manual runs publish to GHCR. GitHub disables Actions on forks by default, so none of this runs until Actions is enabled in the repository settings.
+CI (`.github/workflows/test.yml`) runs on every push: the two `dotnet test` projects, the frontend (`npm run check`, `lint`, `test`, `build`) and the deployment-script tests (`make test-ops`). `build-docker.yml` builds every image platform on pushes to `main` without publishing; only `v*` tags and manual runs publish to GHCR. On a tag it then publishes the GitHub release, with notes listed from the git log, once every image is pushed. GitHub disables Actions on forks by default, so none of this runs until Actions is enabled in the repository settings.
 
 ## Change workflow
 
@@ -147,4 +147,4 @@ Use the template at `templates/release-template.md`. Key rules:
 
 ## Versioning
 
-The app version is `<Version>` in `ImmichFrame.WebApi.csproj` and is also passed as the `VERSION` build arg / `AssemblyVersion` in Docker builds. Tagging `v*` triggers both the GHCR image build and the GitHub release.
+The app version is `<Version>` in `ImmichFrame.WebApi.csproj` and is also passed as the `VERSION` build arg / `AssemblyVersion` in Docker builds. Tagging `v*` builds and pushes the GHCR images and then publishes the GitHub release; if the image build fails, no release is created.
