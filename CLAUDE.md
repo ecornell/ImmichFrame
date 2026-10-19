@@ -94,7 +94,7 @@ The core abstraction is `IAssetPool` (`ImmichFrame.Core/Logic/Pool/`): `GetAsset
 - `PooledImmichFrameLogic.BuildPool()` inspects one account's settings. With no filters at all it uses `AllAssetsPool` (server-side random search). Otherwise it builds a `MultiAssetPool` over the enabled sources: `FavoriteAssetsPool`, `MemoryAssetsPool`, `AlbumAssetsPool`, `PersonAssetsPool` (in `PeopleAssetsPool.cs`), `TagAssetsPool`.
 - `MultiAssetPool` picks a sub-pool weighted by asset count, so larger albums/tags appear proportionally more often.
 - `CachingApiAssetsPool` is the base for the filter pools: it fetches the full id list once per `ApiCache` window (`RefreshAlbumPeopleInterval` hours), applies account filters and excluded albums, then samples randomly.
-- `AggregatingAssetPool` adapts a one-at-a-time `GetNextAsset` into batched `GetAssets`. `QueuingAssetPool` (background prefetch via a `Channel`) exists and is tested but is **not currently wired into any pool**.
+- `AggregatingAssetPool` adapts a one-at-a-time `GetNextAsset` into batched `GetAssets`.
 
 Above the pools, multi-account support layers the same way: `MultiImmichFrameLogicDelegate` implements `IImmichFrameLogic` by delegating to one `PooledImmichFrameLogic` per configured account, choosing between them with `TotalAccountImagesSelectionStrategy` (weighted by each account's total asset count). Because asset ids are only meaningful within their own Immich server, `BloomFilterAssetAccountTracker` records which account served each asset so follow-up calls (`GetAssetInfoById`, `GetAsset`, …) route back to the right one, and `WithAccount()` stamps `ImmichServerUrl` onto every returned `AssetResponseDto`.
 
