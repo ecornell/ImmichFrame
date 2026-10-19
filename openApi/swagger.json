@@ -670,6 +670,14 @@
               "type": "boolean",
               "default": true
             }
+          },
+          {
+            "name": "includeMetadata",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -679,6 +687,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ImageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -2038,6 +2056,58 @@
         },
         "additionalProperties": false
       },
+      "ImageMetadata": {
+        "type": "object",
+        "properties": {
+          "takenAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "timeZone": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "albums": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "isFavorite": {
+            "type": "boolean"
+          },
+          "immichServerUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "ImageResponse": {
         "required": [
           "imageLocation",
@@ -2075,6 +2145,9 @@
             "type": "number",
             "format": "double",
             "nullable": true
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ImageMetadata"
           }
         },
         "additionalProperties": false

@@ -19,6 +19,25 @@ namespace ImmichFrame.WebApi.Controllers
         public Guid? AssetId { get; set; }
         public AssetTypeEnum? AssetType { get; set; }
         public double? DurationSeconds { get; set; }
+        // Only with includeMetadata=true, for clients that report what they show (e.g. to Home Assistant).
+        public ImageMetadata? Metadata { get; set; }
+    }
+
+    /// <summary>Unformatted details of the chosen asset, unlike the display strings above.</summary>
+    public class ImageMetadata
+    {
+        // The capture instant, not LocalDateTime, which is wall time labelled UTC. Immich reports the
+        // capture time zone separately (an IANA name such as "America/New_York") when it knows it.
+        public DateTimeOffset? TakenAt { get; set; }
+        public string? TimeZone { get; set; }
+        public string? Description { get; set; }
+        public List<string> People { get; set; } = new();
+        public List<string> Albums { get; set; } = new();
+        public string? City { get; set; }
+        public string? State { get; set; }
+        public string? Country { get; set; }
+        public bool IsFavorite { get; set; }
+        public string? ImmichServerUrl { get; set; }
     }
 
 
@@ -167,7 +186,8 @@ namespace ImmichFrame.WebApi.Controllers
         [Produces("application/json")]
         [ProducesResponseType(typeof(ImageResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-        public async Task<ActionResult<ImageResponse>> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false, bool includeImage = true)
+        public async Task<ActionResult<ImageResponse>> GetRandomImageAndInfo(string clientIdentifier = "", bool includeVideos = false, bool includeImage = true,
+            bool includeMetadata = false)
         {
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("Random image requested by '{sanitizedClientIdentifier}'", sanitizedClientIdentifier);
@@ -238,8 +258,58 @@ namespace ImmichFrame.WebApi.Controllers
                 AssetType = randomAsset.Type,
                 DurationSeconds = randomAsset.Type == AssetTypeEnum.VIDEO && randomAsset.Duration > 0
                     ? randomAsset.Duration / 1000.0
-                    : null
+                    : null,
+                Metadata = includeMetadata ? await BuildMetadata(randomAsset) : null
             };
+        }
+
+        private async Task<ImageMetadata> BuildMetadata(AssetResponseDto asset)
+        {
+            var exif = asset.ExifInfo;
+            return new ImageMetadata
+            {
+                TakenAt = exif?.DateTimeOriginal ?? asset.FileCreatedAt,
+                TimeZone = NullIfBlank(exif?.TimeZone),
+                Description = NullIfBlank(exif?.Description),
+                // The pools load people with the asset; unnamed and hidden faces are not people to report.
+                People = (asset.People ?? Enumerable.Empty<PersonResponseDto>())
+                    .Where(p => !p.IsHidden && !string.IsNullOrWhiteSpace(p.Name))
+                    .Select(p => p.Name)
+                    .ToList(),
+                Albums = await GetAlbumNames(asset.Id),
+                City = NullIfBlank(exif?.City),
+                State = NullIfBlank(exif?.State),
+                Country = NullIfBlank(exif?.Country),
+                IsFavorite = asset.IsFavorite,
+                ImmichServerUrl = asset.ImmichServerUrl
+            };
+        }
+
+        private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+        // Album membership costs an Immich call per asset, so it is cached for the same window the
+        // pools cache album contents. A failed lookup omits the albums rather than the image.
+        private async Task<List<string>> GetAlbumNames(Guid assetId)
+        {
+            var key = ("AssetAlbums", assetId);
+            if (_cache.TryGetValue(key, out List<string>? cached) && cached != null)
+                return cached;
+
+            try
+            {
+                var names = (await _logic.GetAlbumInfoById(assetId))
+                    .Select(a => a.AlbumName)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Distinct()
+                    .ToList();
+                _cache.Set(key, names, TimeSpan.FromHours(Math.Max(1, _settings.RefreshAlbumPeopleInterval)));
+                return names;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Unable to load albums for asset '{id}'", assetId);
+                return new List<string>();
+            }
         }
 
         private static (string, Guid, string) WebhookKey(Guid id, string clientIdentifier)

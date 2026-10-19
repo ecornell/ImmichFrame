@@ -303,6 +303,18 @@ export type ProblemDetails = {
     instance?: string | null;
     [key: string]: any;
 };
+export type ImageMetadata = {
+    takenAt?: string | null;
+    timeZone?: string | null;
+    description?: string | null;
+    people?: string[] | null;
+    albums?: string[] | null;
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    isFavorite?: boolean;
+    immichServerUrl?: string | null;
+};
 export type ImageResponse = {
     randomImageBase64: string | null;
     thumbHashImageBase64: string | null;
@@ -311,6 +323,7 @@ export type ImageResponse = {
     assetId?: string | null;
     assetType?: AssetTypeEnum;
     durationSeconds?: number | null;
+    metadata?: ImageMetadata;
 };
 export type IAppointment = {
     startTime?: string;
@@ -488,18 +501,23 @@ export function getAsset(id: string, { clientIdentifier, assetType }: {
         ...opts
     });
 }
-export function getRandomImageAndInfo({ clientIdentifier, includeVideos, includeImage }: {
+export function getRandomImageAndInfo({ clientIdentifier, includeVideos, includeImage, includeMetadata }: {
     clientIdentifier?: string;
     includeVideos?: boolean;
     includeImage?: boolean;
+    includeMetadata?: boolean;
 } = {}, opts?: Oazapfts.RequestOpts) {
     return oazapfts.fetchJson<{
         status: 200;
         data: ImageResponse;
+    } | {
+        status: 404;
+        data: ProblemDetails;
     }>(`/api/Asset/RandomImageAndInfo${QS.query(QS.explode({
         clientIdentifier,
         includeVideos,
-        includeImage
+        includeImage,
+        includeMetadata
     }))}`, {
         ...opts
     });

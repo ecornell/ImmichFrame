@@ -307,6 +307,125 @@ namespace ImmichFrame.WebApi.Tests.Controllers
             VerifyWebhooks(id, Times.Never());
         }
 
+        [Test]
+        public async Task GetRandomImageAndInfo_IncludeMetadata_ReturnsUnformattedDetails()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            image.ImmichServerUrl = "http://mock-immich-server.com";
+            image.ExifInfo = new ExifResponseDto
+            {
+                DateTimeOriginal = DateTimeOffset.Parse("2019-07-04T18:22:10-04:00"),
+                TimeZone = "America/New_York",
+                Description = "Fireworks at the lake",
+                City = "Lake George",
+                State = "New York",
+                Country = "",
+            };
+            image.People = new List<PersonResponseDto>
+            {
+                new() { Id = Guid.NewGuid(), Name = "Mom" },
+                new() { Id = Guid.NewGuid(), Name = "" },
+                new() { Id = Guid.NewGuid(), Name = "Hidden", IsHidden = true },
+                new() { Id = Guid.NewGuid(), Name = "Sam" },
+            };
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            _mockLogic.Setup(l => l.GetAlbumInfoById(image.Id)).ReturnsAsync(new[]
+            {
+                new AlbumResponseDto { AlbumName = "Summer 2019" },
+                new AlbumResponseDto { AlbumName = "Family" },
+            });
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false&includeMetadata=true");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var metadata = json.RootElement.GetProperty("metadata");
+            Assert.That(metadata.GetProperty("takenAt").GetDateTimeOffset(),
+                Is.EqualTo(DateTimeOffset.Parse("2019-07-04T18:22:10-04:00")));
+            Assert.That(metadata.GetProperty("timeZone").GetString(), Is.EqualTo("America/New_York"));
+            Assert.That(metadata.GetProperty("description").GetString(), Is.EqualTo("Fireworks at the lake"));
+            Assert.That(metadata.GetProperty("people").EnumerateArray().Select(p => p.GetString()),
+                Is.EqualTo(new[] { "Mom", "Sam" }));
+            Assert.That(metadata.GetProperty("albums").EnumerateArray().Select(a => a.GetString()),
+                Is.EqualTo(new[] { "Summer 2019", "Family" }));
+            Assert.That(metadata.GetProperty("city").GetString(), Is.EqualTo("Lake George"));
+            Assert.That(metadata.GetProperty("country").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(metadata.GetProperty("isFavorite").GetBoolean(), Is.True);
+            Assert.That(metadata.GetProperty("immichServerUrl").GetString(), Is.EqualTo("http://mock-immich-server.com"));
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_WithoutExif_TakenAtFallsBackToFileCreatedAt()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            _mockLogic.Setup(l => l.GetAlbumInfoById(image.Id)).ReturnsAsync(Array.Empty<AlbumResponseDto>());
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false&includeMetadata=true");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var metadata = json.RootElement.GetProperty("metadata");
+            Assert.That(metadata.GetProperty("takenAt").GetDateTimeOffset(), Is.EqualTo(image.FileCreatedAt));
+            Assert.That(metadata.GetProperty("people").GetArrayLength(), Is.Zero);
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_WithoutIncludeMetadata_OmitsMetadataAndSkipsAlbumLookup()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.That(json.RootElement.GetProperty("metadata").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            _mockLogic.Verify(l => l.GetAlbumInfoById(It.IsAny<Guid>()), Times.Never());
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_IncludeMetadata_CachesAlbumsPerAsset()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            _mockLogic.Setup(l => l.GetAlbumInfoById(image.Id))
+                .ReturnsAsync(new[] { new AlbumResponseDto { AlbumName = "Family" } });
+            var client = _factory.CreateClient();
+
+            for (var i = 0; i < 2; i++)
+            {
+                var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false&includeMetadata=true");
+                response.EnsureSuccessStatusCode();
+            }
+
+            _mockLogic.Verify(l => l.GetAlbumInfoById(image.Id), Times.Once());
+        }
+
+        [Test]
+        public async Task GetRandomImageAndInfo_AlbumLookupFails_StillReturnsImageWithoutAlbums()
+        {
+            var image = BuildAssetResponse(Guid.NewGuid());
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetNextAsset()).ReturnsAsync(image);
+            _mockLogic.Setup(l => l.GetAlbumInfoById(image.Id)).ThrowsAsync(new HttpRequestException("immich down"));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("/api/Asset/RandomImageAndInfo?includeImage=false&includeMetadata=true");
+
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.That(json.RootElement.GetProperty("assetId").GetGuid(), Is.EqualTo(image.Id));
+            Assert.That(json.RootElement.GetProperty("metadata").GetProperty("albums").GetArrayLength(), Is.Zero);
+        }
+
         private void VerifyWebhooks(Guid assetId, Times times)
             => _mockLogic!.Verify(l => l.SendWebhookNotification(
                 It.Is<IWebhookNotification>(n => n is AssetRequestedNotification
