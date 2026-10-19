@@ -10,8 +10,13 @@ as `root@192.168.1.24`, and the Compose service uses the local
 From the repository root, run:
 
 ```bash
-./scripts/deploy-prod.sh
+AUTHENTICATION_SECRET=$(ssh root@192.168.1.24 cat /root/immichframe-auth-secret) \
+  ./scripts/deploy-prod.sh
 ```
+
+Production requires `AuthenticationSecret`, and the deployment's smoke checks call
+authenticated endpoints, so the secret must be in the environment. Without it the
+checks fail with HTTP 401 and the deployment rolls back.
 
 The script deploys the current committed working tree. It refuses uncommitted or
 untracked changes by default so every production image can be reproduced. It:
@@ -84,8 +89,32 @@ unset AUTHENTICATION_SECRET
 
 The settings editor is available at <http://192.168.1.24:8080/settings>.
 Because it can change Immich API keys and server configuration, production
-should set `AuthenticationSecret`; otherwise every client that can reach the
+sets `AuthenticationSecret`; without it, every client that can reach the
 service can read and modify its settings.
+
+### Authentication secret
+
+Enabled on 2026-10-19. The secret is `General.AuthenticationSecret` in
+`/opt/stacks/immich/immichframe-config/Settings.json`, and a copy is kept in
+`/root/immichframe-auth-secret` (root-only) for scripts. It is file-only: the
+settings editor neither shows nor changes it. The asset, calendar, weather and
+admin settings APIs return 401 without it; `/api/Config` stays open.
+
+Every frame must send it. Both Android frames store it as the app's
+**Authorization Secret** preference (`authSecret`); their previous preferences
+are backed up in the app's `files/prefs-before-authsecret-20261019.xml`. A
+browser must first open the frame page, <http://192.168.1.24:8080/?authsecret=SECRET>,
+or enter the secret in the prompt it shows after a 401. The browser remembers it,
+and `/settings` then uses it. The settings page cannot take the secret itself and
+only shows a load error until the browser has it.
+
+It was enabled without a gap: the frames got the secret first, while the server
+still ignored the header. Rotating it does cause a gap, because once a secret is
+set any frame sending a different one gets 401. Update `Settings.json` and
+`/root/immichframe-auth-secret`, run `docker compose restart immichframe`, then
+update each frame's preference and restart its app.
+Rollback: restore `Settings.json.pre-authsecret-20261019` in the same directory
+and restart.
 
 Each successful deployment prints its rollback tag. To restore one manually:
 
