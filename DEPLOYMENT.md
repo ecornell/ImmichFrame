@@ -100,6 +100,74 @@ curl -fsS -o /dev/null http://127.0.0.1:8080/
 Old `immichframe:rollback-*` images are intentionally retained until manually
 removed.
 
+## Immich video transcoding for frames
+
+Frames play videos from `GET /api/Asset/{id}/Asset?assetType=VIDEO`, which proxies
+Immich's `/video/playback`. Immich serves its encoded copy when one exists and the
+original otherwise, so the frames' video quality is set by Immich's transcoding
+settings, not by ImmichFrame.
+
+Immich's default policy (`required`) only re-encodes videos whose codec is not
+accepted, so iPhone H.264 originals reached the frames untouched at 1080p and
+15–21 Mbps. The Nixplay W10J (RK3126C, 512 MB, 2.4 GHz Wi-Fi measured at about
+25 Mbps on the frame) could not stream them without buffering stalls. On
+2026-10-18 and 19 the Immich ffmpeg settings were changed to:
+
+| Setting | Before | After |
+|---|---|---|
+| Transcode policy (`transcode`) | `required` | `optimal` (re-encode above the target resolution) |
+| Maximum bitrate (`maxBitrate`) | `0` (none) | `4500k` |
+| Hardware decoding (`accelDecode`) | on | off |
+
+The target resolution stays `720`, encoding stays VAAPI, and accepted codecs stay
+`h264`. Hardware decoding is off because VAAPI decoding scales rotated (portrait)
+phone videos against the wrong side: a 1920×1080 clip rotated −90° came out
+406×720 instead of 720×1280. Software decoding with VAAPI encoding produces the
+correct size. Encoded copies live in Immich's `encoded-video/` folder; originals
+are never modified.
+
+The settings before the change are saved as
+`/opt/stacks/immich/system-config.backup-20261018-192558.json` (root-only; it may
+contain secrets). To roll back, apply its `ffmpeg` block in Immich's
+Administration → Settings → Video Transcoding, or `PUT /api/system-config` with
+an admin API key.
+
+### Immich v3 stream metadata
+
+Immich v3 reads codec, resolution and bitrate from the `asset_video` table, which
+metadata extraction fills. After the upgrade only 459 of 4,625 videos had a row;
+for the rest the encode job silently does nothing and the frame keeps getting the
+original. On 2026-10-19 metadata was refreshed for those 4,164 videos and a forced
+video transcode was run over the library (about two hours). Result: 4,553 videos
+encoded; 60 already at or below 720p need no copy; 12 hidden Live Photo clips
+(`IMG_*.mov`, 1920×1440, no duration) fail to decode in ffmpeg and are left as is.
+New uploads get stream metadata automatically.
+
+To fix a single video, for example one newly added to a frame album:
+
+```bash
+# IMMICH_API_KEY must belong to an admin; never pass it on a shared command line.
+for job in refresh-metadata transcode-video; do
+  curl -fsS -X POST -H "x-api-key: $IMMICH_API_KEY" -H 'Content-Type: application/json' \
+    -d "{\"assetIds\":[\"<asset-id>\"],\"name\":\"$job\"}" \
+    http://192.168.1.24:2283/api/assets/jobs
+  sleep 10  # let metadata extraction finish before queueing the encode
+done
+```
+
+Check the result through the frame endpoint: the response should be `video/mp4`
+with the shortest side at most 720 pixels.
+
+### Known gap: small high-bitrate videos
+
+`optimal` decides by resolution only, and Immich has no policy that also checks
+bitrate, so videos already at or below 720p keep their original bitrate. 25 such
+videos exceed 4.5 Mbps (17 exceed 10 Mbps, the highest 42 Mbps) and would stall on
+the W10J. None are in the frame album as of 2026-10-19. If one is added, re-encode
+it individually or temporarily switch the policy to `bitrate`, queue
+`transcode-video` for it, then switch back. A later forced transcode under
+`optimal` deletes such a copy again as no longer required.
+
 ## Opt-in health monitoring and durable recovery
 
 The repository does not install or activate monitoring. On a host where an operator has
