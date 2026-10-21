@@ -4,6 +4,8 @@ using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Logic.Pool;
 using ImmichFrame.Core.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ImmichFrame.Core.Logic;
 
@@ -15,22 +17,37 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     private readonly IAssetShowHistory _showHistory;
     private readonly ImmichApi _immichApi;
     private readonly string _downloadLocation;
+    private readonly ILogger _logger;
+    private readonly TimeProvider _time;
     private readonly object _imageCacheLocksGate = new();
     private readonly Dictionary<Guid, ImageCacheLock> _imageCacheLocks = [];
+    private readonly Lazy<bool> _cacheWritable;
+    private long _nextSweepTicks;
+
+    /// <summary>How often expired files are swept from the image cache.</summary>
+    internal static readonly TimeSpan SweepInterval = TimeSpan.FromHours(1);
+
+    /// <summary>Temporary download files older than this are leftovers from a crash.</summary>
+    private static readonly TimeSpan StaleTemporaryFileAge = TimeSpan.FromHours(1);
 
     public PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings,
-        IHttpClientFactory httpClientFactory, IAssetShowHistory showHistory)
+        IHttpClientFactory httpClientFactory, IAssetShowHistory showHistory,
+        ImageCacheLocation? imageCacheLocation = null, ILogger<PooledImmichFrameLogic>? logger = null)
         : this(accountSettings, generalSettings, httpClientFactory,
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache"), showHistory)
+            (imageCacheLocation ?? ImageCacheLocation.Default).Directory, showHistory, logger)
     {
     }
 
     internal PooledImmichFrameLogic(IAccountSettings accountSettings, IGeneralSettings generalSettings,
-        IHttpClientFactory httpClientFactory, string downloadLocation, IAssetShowHistory? showHistory = null)
+        IHttpClientFactory httpClientFactory, string downloadLocation, IAssetShowHistory? showHistory = null,
+        ILogger? logger = null, TimeProvider? timeProvider = null)
     {
         _generalSettings = generalSettings;
         _showHistory = showHistory ?? new AssetShowHistory();
         _downloadLocation = downloadLocation;
+        _logger = logger ?? NullLogger.Instance;
+        _time = timeProvider ?? TimeProvider.System;
+        _cacheWritable = new Lazy<bool>(ProbeCacheWritable);
 
         var httpClient = httpClientFactory.CreateClient(ImmichApiHttpClientExtensions.ImmichApiAccountClient);
         AccountSettings = accountSettings;
@@ -120,7 +137,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     }
     private async Task<AssetResponse> GetImageAsset(Guid id)
     {
-        if (!_generalSettings.DownloadImages)
+        if (!_generalSettings.DownloadImages || !_cacheWritable.Value)
         {
             var uncachedResponse = await DownloadImage(id);
             var (uncachedFileName, uncachedContentType) = GetImageMetadata(id, uncachedResponse);
@@ -128,7 +145,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
                 uncachedResponse.Stream, uncachedResponse);
         }
 
-        Directory.CreateDirectory(_downloadLocation);
+        SweepIfDue();
         using var cacheLock = await AcquireImageCacheLock(id);
         var cached = FindFreshCachedImage(id);
         if (cached != null)
@@ -160,6 +177,72 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
         }
 
         return CreateImageResponse(fileName, contentType, File.OpenRead(filePath));
+    }
+
+    /// <summary>
+    /// Checked once per account graph (rebuilt on every settings save). The container runs as a
+    /// non-root user, so a cache directory under a root-owned path is not writable; images are then
+    /// streamed uncached instead of failing every request.
+    /// </summary>
+    private bool ProbeCacheWritable()
+    {
+        try
+        {
+            Directory.CreateDirectory(_downloadLocation);
+            var probe = Path.Combine(_downloadLocation, $".write-probe-{Guid.NewGuid():N}");
+            File.WriteAllBytes(probe, []);
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Image cache directory {Directory} is not writable ({Message}); images will be streamed without caching.",
+                _downloadLocation, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Starts a background sweep at most once per <see cref="SweepInterval"/>. Reading the cache only
+    /// prunes the requested asset, so without this, files of assets never requested again pile up.
+    /// </summary>
+    private void SweepIfDue()
+    {
+        var now = _time.GetUtcNow().UtcTicks;
+        var due = Interlocked.Read(ref _nextSweepTicks);
+        if (now < due) return;
+        if (Interlocked.CompareExchange(ref _nextSweepTicks, now + SweepInterval.Ticks, due) != due) return;
+
+        _ = Task.Run(SweepImageCache);
+    }
+
+    internal void SweepImageCache()
+    {
+        try
+        {
+            var now = _time.GetUtcNow().UtcDateTime;
+            foreach (var file in Directory.EnumerateFiles(_downloadLocation))
+            {
+                try
+                {
+                    var age = now - File.GetCreationTimeUtc(file);
+                    var isTemporary = Path.GetFileName(file).StartsWith('.');
+                    var expired = isTemporary
+                        ? age > StaleTemporaryFileAge
+                        : _generalSettings.RenewImagesDuration <= age.Days;
+
+                    if (expired) File.Delete(file);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogDebug("Could not remove cached image {File}: {Message}", file, ex.Message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Image cache sweep of {Directory} failed: {Message}", _downloadLocation, ex.Message);
+        }
     }
 
     internal int ImageCacheLockCount

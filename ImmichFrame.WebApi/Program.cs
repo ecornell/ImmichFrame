@@ -68,6 +68,10 @@ static string ResolveConfigPath() =>
 
 builder.Services.AddTransient<ConfigLoader>();
 builder.Services.AddSingleton(_ => new ConfigLocation(ResolveConfigPath()));
+// DownloadImages cache. Under the config directory because that is the one location the container
+// is expected to have writable (a mounted volume); /app itself is root-owned.
+builder.Services.AddSingleton(srv =>
+    new ImageCacheLocation(Path.Combine(srv.GetRequiredService<ConfigLocation>().Directory, "ImageCache")));
 
 // Bootstrap seed only — this is the configuration as it was on disk at startup and it does NOT
 // track edits made through the admin API. Inject IGeneralSettings (or SettingsStore) for live values.

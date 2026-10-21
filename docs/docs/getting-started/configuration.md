@@ -34,7 +34,8 @@ Defaults are below, only one account with `ImmichServerUrl` and `ApiKey`|`ApiKey
 General:
   # When set, every client needs to authenticate via Bearer Token and this value.
   AuthenticationSecret: null  # string, no default
-  # whether to download images to the server
+  # whether to download images to the server. They are cached in an `ImageCache` folder inside the
+  # config directory; if that is not writable, images are streamed without caching.
   DownloadImages: false  # boolean
   # if images are downloaded, re-download if age (in days) is more than this
   RenewImagesDuration: 30  # int

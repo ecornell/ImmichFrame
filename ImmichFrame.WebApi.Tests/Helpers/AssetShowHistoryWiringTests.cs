@@ -28,4 +28,22 @@ public class AssetShowHistoryWiringTests
 
         Assert.That(logic, Is.Not.Null);
     }
+
+    [Test]
+    public void AccountLogicResolvesWithARegisteredImageCacheLocation()
+    {
+        var services = new ServiceCollection();
+        services.AddHttpClient();
+        services.AddSingleton<IAssetShowHistory, AssetShowHistory>();
+        services.AddSingleton(new ImageCacheLocation(Path.Combine(Path.GetTempPath(), "immichframe-cache-wiring")));
+        using var provider = services.BuildServiceProvider();
+        var account = new Mock<IAccountSettings>();
+        account.SetupGet(x => x.ImmichServerUrl).Returns("http://immich.invalid");
+        account.SetupGet(x => x.ApiKey).Returns("key");
+
+        var logic = ActivatorUtilities.CreateInstance<PooledImmichFrameLogic>(
+            provider, account.Object, Mock.Of<IGeneralSettings>());
+
+        Assert.That(logic, Is.Not.Null);
+    }
 }

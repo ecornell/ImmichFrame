@@ -100,8 +100,77 @@ public class PooledImmichFrameLogicImageTests
         Assert.That(logic.ImageCacheLockCount, Is.Zero);
     }
 
+    [Test]
+    public async Task UnwritableCacheDirectory_StreamsImageUncached()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Ignore("Uses Unix file modes.");
+
+        var parent = Path.Combine(Path.GetTempPath(), "immichframe-image-cache-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(parent);
+        File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            _cacheDirectory = Path.Combine(parent, "ImageCache");
+            if (CanCreate(_cacheDirectory)) Assert.Ignore("Running with privileges that ignore file modes.");
+
+            var logic = CreateLogic(downloadImages: true, _ => ImageResponse(new TrackingStream([1, 2, 3])));
+
+            var asset = await logic.GetAsset(Guid.NewGuid(), AssetTypeEnum.IMAGE);
+            using (asset.Owner)
+            await using (asset.FileStream)
+            {
+                using var memory = new MemoryStream();
+                await asset.FileStream.CopyToAsync(memory);
+                Assert.That(memory.ToArray(), Is.EqualTo(new byte[] { 1, 2, 3 }));
+            }
+            Assert.That(Directory.Exists(_cacheDirectory), Is.False);
+        }
+        finally
+        {
+            File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Directory.Delete(parent, recursive: true);
+        }
+    }
+
+    private static bool CanCreate(string directory)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            Directory.Delete(directory);
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    [Test]
+    public async Task Sweep_RemovesExpiredImagesAndStaleTemporaryFiles()
+    {
+        var time = new ManualTimeProvider { Now = DateTimeOffset.UtcNow };
+        var logic = CreateLogic(downloadImages: true, _ => ImageResponse(new TrackingStream([1, 2, 3])), time);
+        var asset = await logic.GetAsset(Guid.NewGuid(), AssetTypeEnum.IMAGE);
+        asset.FileStream.Dispose();
+        File.WriteAllBytes(Path.Combine(_cacheDirectory, ".leftover.jpeg.tmp"), [1]);
+
+        logic.SweepImageCache();
+        Assert.That(Directory.EnumerateFiles(_cacheDirectory), Has.Exactly(2).Items, "nothing is expired yet");
+
+        time.Now += TimeSpan.FromDays(31); // RenewImagesDuration is 30
+        logic.SweepImageCache();
+        Assert.That(Directory.EnumerateFiles(_cacheDirectory), Is.Empty);
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; }
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private PooledImmichFrameLogic CreateLogic(bool downloadImages,
-        Func<HttpRequestMessage, HttpResponseMessage> responseFactory)
+        Func<HttpRequestMessage, HttpResponseMessage> responseFactory, TimeProvider? time = null)
     {
         var handler = new DelegateHandler(responseFactory);
         var client = new HttpClient(handler);
@@ -117,7 +186,8 @@ public class PooledImmichFrameLogicImageTests
         account.SetupGet(x => x.ImmichServerUrl).Returns("http://immich.test/api");
         account.SetupGet(x => x.ApiKey).Returns("test-key");
 
-        return new PooledImmichFrameLogic(account.Object, general.Object, factory.Object, _cacheDirectory);
+        return new PooledImmichFrameLogic(account.Object, general.Object, factory.Object, _cacheDirectory,
+            timeProvider: time);
     }
 
     private static HttpResponseMessage ImageResponse(Stream stream)
