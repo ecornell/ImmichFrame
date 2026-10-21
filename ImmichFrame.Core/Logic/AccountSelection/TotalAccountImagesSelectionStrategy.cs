@@ -21,10 +21,19 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
 {
     internal static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// How long an account's count or batch may take before it is treated as failing, when other
+    /// accounts could serve instead. The Immich client has no timeout of its own below HttpClient's
+    /// 100 s default (it also streams videos), so a black-holed server would otherwise stall every
+    /// pick for that long. The abandoned call keeps running; a later success is cached as usual.
+    /// </summary>
+    internal static readonly TimeSpan DefaultAccountCallTimeout = TimeSpan.FromSeconds(15);
+
     private readonly ILogger<TotalAccountImagesSelectionStrategy> _logger;
     private readonly IAssetAccountTracker _tracker;
     private readonly IList<IAccountImmichFrameLogic> _accounts;
     private readonly TimeProvider _time;
+    private readonly TimeSpan _accountCallTimeout;
     private readonly ConcurrentDictionary<IAccountImmichFrameLogic, DateTimeOffset> _failedUntil = new();
 
     public TotalAccountImagesSelectionStrategy(
@@ -39,12 +48,14 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
         ILogger<TotalAccountImagesSelectionStrategy> logger,
         IAssetAccountTracker tracker,
         IList<IAccountImmichFrameLogic> accounts,
-        TimeProvider time)
+        TimeProvider time,
+        TimeSpan? accountCallTimeout = null)
     {
         _logger = logger;
         _tracker = tracker;
         _accounts = accounts;
         _time = time;
+        _accountCallTimeout = accountCallTimeout ?? DefaultAccountCallTimeout;
     }
 
     public async Task<(IAccountImmichFrameLogic, AssetResponseDto)?> GetNextAsset()
@@ -90,6 +101,11 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
         lastFailure?.Throw();
         return null;
     }
+
+    // With a single account there is nothing else to serve, so waiting is better than giving up
+    // (a first load of a large album can legitimately take a while).
+    private Task<T> Bounded<T>(Task<T> call) =>
+        _accounts.Count > 1 ? call.WaitAsync(_accountCallTimeout) : call;
 
     private bool IsCoolingDown(IAccountImmichFrameLogic account) =>
         _failedUntil.TryGetValue(account, out var until) && _time.GetUtcNow() < until;
@@ -138,7 +154,7 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
 
         try
         {
-            var total = await account.GetTotalAssets();
+            var total = await Bounded(account.GetTotalAssets());
             MarkHealthy(account);
             return total;
         }
@@ -155,7 +171,7 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
 
         try
         {
-            return await account.GetAssets();
+            return await Bounded(account.GetAssets());
         }
         catch (Exception ex)
         {

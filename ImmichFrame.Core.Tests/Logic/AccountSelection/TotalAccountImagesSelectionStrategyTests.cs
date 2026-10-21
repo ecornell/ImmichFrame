@@ -177,6 +177,30 @@ namespace ImmichFrame.Core.Tests.Logic.AccountSelection
         }
 
         [Test]
+        public async Task GetNextAsset_AccountHangs_OtherAccountsServeWithoutWaitingItOut()
+        {
+            // A black-holed server never answers; the HttpClient default would wait 100 s.
+            var asset = CreateAsset();
+            var healthy = CreateAccount(10, [asset]);
+            healthy.Setup(a => a.GetNextAsset()).ReturnsAsync(asset);
+            var hanging = new Mock<IAccountImmichFrameLogic>();
+            hanging.Setup(a => a.GetTotalAssets()).Returns(new TaskCompletionSource<long>().Task);
+            var strategy = new TotalAccountImagesSelectionStrategy(NullLogger<TotalAccountImagesSelectionStrategy>.Instance,
+                _mockTracker.Object, [hanging.Object, healthy.Object], TimeProvider.System, TimeSpan.FromMilliseconds(100));
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var first = await strategy.GetNextAsset();
+            var second = await strategy.GetNextAsset();
+            stopwatch.Stop();
+
+            Assert.That(first!.Value.Item1, Is.SameAs(healthy.Object));
+            Assert.That(second!.Value.Item1, Is.SameAs(healthy.Object));
+            Assert.That(stopwatch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+            // Cooled down after the first timeout, so the second pick did not wait again.
+            hanging.Verify(a => a.GetTotalAssets(), Times.Once);
+        }
+
+        [Test]
         public async Task GetNextAsset_ChosenAccountFails_RetriesWithAnotherAccount()
         {
             var asset = CreateAsset();
