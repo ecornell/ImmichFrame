@@ -33,69 +33,84 @@ public class IcalCalendarService : ICalendarService, ISettingsResettable
         return await _appointmentCache.GetOrAddAsync("appointments", async () =>
         {
             var appointments = new List<IAppointment>();
+            var client = _httpClientFactory.CreateClient();
+            var calendars = _serverSettings.Webcalendars;
 
-            List<(string? auth, string url)> cals = _serverSettings.Webcalendars.Select<string, (string? auth, string url)?>(x =>
+            // Each calendar on its own: one unreachable or malformed feed must not hide the others.
+            for (var index = 0; index < calendars.Count; index++)
             {
+                var label = $"calendar #{index + 1}";
+
+                if (!TryParse(calendars[index], out var auth, out var url))
+                {
+                    // Calendar URLs routinely carry secret tokens, so they are never logged.
+                    _logger.LogError("Invalid URL for {Calendar}", label);
+                    continue;
+                }
+
+                label = $"{label} ({Redact(url)})";
+
                 try
                 {
-                    var uri = new Uri(x.Replace("webcal://", "https://"));
-                    if (!string.IsNullOrEmpty(uri.UserInfo))
-                    {
-                        var url = uri.GetComponents(UriComponents.AbsoluteUri & ~UriComponents.UserInfo, UriFormat.UriEscaped);
-                        return (Uri.UnescapeDataString(uri.UserInfo), url);
-                    }
-                    return (null, x);
+                    var ical = await GetCalendar(client, auth, url);
+                    if (ical == null) continue;
+
+                    var calendar = Calendar.Load(ical);
+                    appointments.AddRange(calendar.GetOccurrences(DateTime.Today, DateTime.Today.AddDays(1)).Select(x => x.ToAppointment()));
                 }
-                catch (UriFormatException)
+                catch (Exception ex)
                 {
-                    _logger.LogError($"Invalid calendar URL: '{x}'");
-                    return null;
+                    _logger.LogError("Failed to load {Calendar}: {Error}", label, ex.GetType().Name);
                 }
-            }).Where(x => x != null).Select(x => x!.Value).ToList();
-
-            var icals = await GetCalendars(cals);
-
-            foreach (var ical in icals)
-            {
-                var calendar = Calendar.Load(ical);
-
-                appointments.AddRange(calendar.GetOccurrences(DateTime.Today, DateTime.Today.AddDays(1)).Select(x => x.ToAppointment()));
             }
 
             return appointments;
         });
     }
 
-    public async Task<List<string>> GetCalendars(IEnumerable<(string? auth, string url)> calendars)
+    private static bool TryParse(string value, out string? auth, out Uri url)
     {
-        var icals = new List<string>();
-        var client = _httpClientFactory.CreateClient();
+        auth = null;
+        url = null!;
 
-        foreach (var calendar in calendars)
+        if (!Uri.TryCreate(value.Replace("webcal://", "https://"), UriKind.Absolute, out var uri))
+            return false;
+
+        if (!string.IsNullOrEmpty(uri.UserInfo))
         {
-            _logger.LogDebug($"Loading calendar: {(calendar.auth != null ? "[authenticated]" : "no auth")} - {calendar.url}");
-
-            string httpUrl = calendar.url.Replace("webcal://", "https://");
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, httpUrl);
-
-            if (!string.IsNullOrEmpty(calendar.auth))
-            {
-                var byteArray = Encoding.UTF8.GetBytes(calendar.auth);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(byteArray));
-            }
-
-            using var response = await client.SendAsync(request);
-            if (response.IsSuccessStatusCode)
-            {
-                icals.Add(await response.Content.ReadAsStringAsync());
-            }
-            else
-            {
-                _logger.LogError($"Failed to load calendar data from '{httpUrl}' (Status: {response.StatusCode})");
-            }
+            auth = Uri.UnescapeDataString(uri.UserInfo);
+            uri = new Uri(uri.GetComponents(UriComponents.AbsoluteUri & ~UriComponents.UserInfo, UriFormat.UriEscaped));
         }
 
-        return icals;
+        url = uri;
+        return true;
+    }
+
+    /// <summary>
+    /// Scheme and host only. Hosted calendars (Google, iCloud, Outlook) put the secret token in the
+    /// path, so stripping the query string would not be enough.
+    /// </summary>
+    internal static string Redact(Uri url) => $"{url.Scheme}://{url.Host}";
+
+    private async Task<string?> GetCalendar(HttpClient client, string? auth, Uri url)
+    {
+        _logger.LogDebug("Loading calendar: {Auth} - {Host}", auth != null ? "[authenticated]" : "no auth", Redact(url));
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        if (!string.IsNullOrEmpty(auth))
+        {
+            var byteArray = Encoding.UTF8.GetBytes(auth);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(byteArray));
+        }
+
+        using var response = await client.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        _logger.LogError("Failed to load calendar data from {Host} (Status: {Status})", Redact(url), response.StatusCode);
+        return null;
     }
 }
