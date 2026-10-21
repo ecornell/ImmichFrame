@@ -21,7 +21,9 @@
 		assetPromiseKeysToRemove,
 		ConsecutiveMediaFailures,
 		fatalMediaErrorAfterCandidate,
+		AUTH_RETRY_MS,
 		retryDelay,
+		shouldAttemptRecovery,
 		transitionIsCurrent,
 		untilAborted,
 		WATCHDOG_ABORT,
@@ -84,6 +86,7 @@
 	let offline: boolean = $state(false);
 	let infoVisible: boolean = $state(false);
 	let authError: boolean = $state(false);
+	let newAuthSecret: string = $state('');
 	let errorMessage: string = $state('');
 	let assetsState: AssetsState = $state({
 		assets: [],
@@ -301,6 +304,7 @@
 	let isHandlingAssetTransition = $state(false);
 	let recoveryAttempts = 0;
 	let nextRecoveryAt = 0;
+	let nextAuthRetryAt = 0;
 	let transitionEpoch = 0;
 	let pendingTransition: { previous: boolean; instant: boolean } | null = $state(null);
 
@@ -443,6 +447,7 @@
 		authError = false;
 		recoveryAttempts = 0;
 		nextRecoveryAt = 0;
+		nextAuthRetryAt = 0;
 		recordRecentAssets(next);
 		return 'shown';
 	}
@@ -662,18 +667,29 @@
 
 		// Retry API work in place so an outage does not discard the last rendered photo.
 		// Backs off (2 s doubling to 30 s) so a server that stays slow isn't hammered.
+		// A rejected secret is retried every few minutes instead, so restoring it recovers.
 		retryInterval = window.setInterval(() => {
-			if (
-				(error || offline) &&
-				!authError &&
-				!isHandlingAssetTransition &&
-				Date.now() >= nextRecoveryAt
-			) {
-				nextRecoveryAt = Date.now() + retryDelay(recoveryAttempts++);
-				handleDone(false, true).catch((caught) =>
-					console.error('Recovery transition failed:', caught)
-				);
+			const now = Date.now();
+			if (authError && !nextAuthRetryAt) nextAuthRetryAt = now + AUTH_RETRY_MS;
+			const attempt = shouldAttemptRecovery({
+				failing: error || offline,
+				authError,
+				transitionInFlight: isHandlingAssetTransition,
+				now,
+				nextRecoveryAt,
+				nextAuthRetryAt
+			});
+			if (!attempt) return;
+
+			if (authError) {
+				nextAuthRetryAt = now + AUTH_RETRY_MS;
+				api.init(); // picks up a secret saved since the failure
+			} else {
+				nextRecoveryAt = now + retryDelay(recoveryAttempts++);
 			}
+			handleDone(false, true).catch((caught) =>
+				console.error('Recovery transition failed:', caught)
+			);
 		}, RETRY_ON_ERROR_MS);
 
 		// Last resort: a slideshow that stops finishing transitions (a stuck await, a progress bar
@@ -822,7 +838,31 @@
 			/>
 		</div>
 
-		{#if offline}
+		{#if authError}
+			<form
+				class="absolute right-4 top-4 z-[1001] flex flex-col gap-2 rounded bg-black/70 px-3 py-2 text-white"
+				onsubmit={(event) => {
+					event.preventDefault();
+					if (!newAuthSecret) return;
+					authSecretStore.set(newAuthSecret);
+					location.reload();
+				}}
+			>
+				<p>Could not authenticate — retrying every few minutes</p>
+				<div class="flex gap-2">
+					<input
+						type="password"
+						class="border-2 border-gray-400 bg-transparent px-2 text-center"
+						placeholder="add secret..."
+						autocomplete="off"
+						bind:value={newAuthSecret}
+					/>
+					<button class="rounded-md border-2 border-gray-400 px-2" type="submit"
+						>Authenticate</button
+					>
+				</div>
+			</form>
+		{:else if offline}
 			<div class="absolute right-4 top-4 z-[1001] rounded bg-black/70 px-3 py-2 text-white">
 				Offline — retrying
 			</div>

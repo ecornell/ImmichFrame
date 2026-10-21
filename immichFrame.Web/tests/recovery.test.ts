@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	assetPromiseKeysToRemove,
+	AUTH_RETRY_MS,
 	ConsecutiveMediaFailures,
 	fatalMediaErrorAfterCandidate,
 	retryDelay,
+	shouldAttemptRecovery,
 	transitionIsCurrent,
 	untilAborted,
 	WATCHDOG_ABORT,
@@ -13,6 +15,26 @@ import {
 
 test('configuration retries use bounded exponential backoff', () => {
 	assert.deepEqual([0, 1, 2, 3, 10].map(retryDelay), [2000, 4000, 8000, 16000, 30000]);
+});
+
+test('recovery retries outages on the backoff and a rejected secret slowly', () => {
+	const base = {
+		failing: true,
+		authError: false,
+		transitionInFlight: false,
+		now: 10_000,
+		nextRecoveryAt: 0,
+		nextAuthRetryAt: 0
+	};
+	assert.equal(shouldAttemptRecovery(base), true);
+	assert.equal(shouldAttemptRecovery({ ...base, failing: false }), false);
+	assert.equal(shouldAttemptRecovery({ ...base, transitionInFlight: true }), false);
+	assert.equal(shouldAttemptRecovery({ ...base, nextRecoveryAt: 10_001 }), false);
+
+	// After a 401 the frame keeps retrying, just on the slow schedule.
+	const auth = { ...base, authError: true, nextAuthRetryAt: 10_000 + AUTH_RETRY_MS };
+	assert.equal(shouldAttemptRecovery(auth), false);
+	assert.equal(shouldAttemptRecovery({ ...auth, now: auth.nextAuthRetryAt }), true);
 });
 
 test('aborted and stale transitions cannot commit state', () => {
