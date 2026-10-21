@@ -35,15 +35,18 @@
 	});
 
 	async function GetAppointments() {
-		let appointmentRequest = await api.getAppointments({
-			clientIdentifier: $clientIdentifierStore
-		});
-		if (appointmentRequest.status == 200) {
-			appointments = appointmentRequest.data;
-
-			appointments = appointmentRequest.data.sort((a, b) => {
-				return new Date(a.startTime ?? '').getTime() - new Date(b.startTime ?? '').getTime();
+		try {
+			let appointmentRequest = await api.getAppointments({
+				clientIdentifier: $clientIdentifierStore
 			});
+			if (appointmentRequest.status == 200 && Array.isArray(appointmentRequest.data)) {
+				appointments = appointmentRequest.data.sort((a, b) => {
+					return new Date(a.startTime ?? '').getTime() - new Date(b.startTime ?? '').getTime();
+				});
+			}
+		} catch (err) {
+			// Server unreachable: keep the last list and try again on the next poll.
+			console.warn('Failed to load appointments:', err);
 		}
 	}
 </script>
