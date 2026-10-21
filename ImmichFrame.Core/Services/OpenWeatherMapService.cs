@@ -1,3 +1,4 @@
+using System.Globalization;
 using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 
@@ -23,15 +24,29 @@ public class OpenWeatherMapService : IWeatherService, ISettingsResettable
     {
         return await _weatherCache.GetOrAddAsync("weather", async () =>
         {
-            var weatherLatLong = _settings.WeatherLatLong;
+            if (!TryParseLatLong(_settings.WeatherLatLong, out var latitude, out var longitude))
+            {
+                // A malformed location means no weather, not a failed request.
+                return null;
+            }
 
-            var weatherLat = !string.IsNullOrWhiteSpace(weatherLatLong) ? float.Parse(weatherLatLong!.Split(',')[0]) : 0f;
-            var weatherLong = !string.IsNullOrWhiteSpace(weatherLatLong) ? float.Parse(weatherLatLong!.Split(',')[1]) : 0f;
-
-            var weather = await GetWeather(weatherLat, weatherLong);
-
-            return weather;
+            return await GetWeather(latitude, longitude);
         });
+    }
+
+    /// <summary>
+    /// Parses "lat,long" with the invariant culture, as the settings validator does. The current
+    /// culture would read "40.7128" as 407128 under e.g. a German locale.
+    /// </summary>
+    public static bool TryParseLatLong(string? value, out double latitude, out double longitude)
+    {
+        latitude = longitude = 0;
+        if (string.IsNullOrWhiteSpace(value)) return true; // unset: historical behaviour, (0, 0)
+
+        var parts = value.Split(',');
+        return parts.Length == 2
+               && double.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out latitude)
+               && double.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out longitude);
     }
 
     public async Task<IWeather?> GetWeather(double latitude, double longitude)

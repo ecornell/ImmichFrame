@@ -59,6 +59,13 @@ public static class SettingsValidator
             !KnownLayouts.Contains(general.Layout, StringComparer.OrdinalIgnoreCase))
             problems.Add($"Layout '{general.Layout}' is not one of: {string.Join(", ", KnownLayouts)}.");
 
+        // Used to format the photo date for native clients; an unknown culture name throws there.
+        if (!IsValidCulture(general.Language))
+            problems.Add($"Language '{general.Language}' is not a recognised language code, e.g. 'en' or 'de'.");
+
+        if (!string.IsNullOrEmpty(general.PhotoDateFormat) && !IsValidDateFormat(general.PhotoDateFormat))
+            problems.Add($"PhotoDateFormat '{general.PhotoDateFormat}' is not a valid date format.");
+
         // Only meaningful when weather is actually switched on.
         if (!string.IsNullOrWhiteSpace(general.WeatherApiKey) && !IsValidLatLong(general.WeatherLatLong))
             problems.Add("WeatherLatLong must be two comma-separated numbers, e.g. '40.7128,-74.0060'.");
@@ -114,6 +121,35 @@ public static class SettingsValidator
     private static bool IsAbsoluteHttpUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static bool IsValidCulture(string? value)
+    {
+        // Empty has always meant the invariant culture.
+        if (string.IsNullOrEmpty(value)) return true;
+        try
+        {
+            _ = System.Globalization.CultureInfo.GetCultureInfo(value);
+            return true;
+        }
+        catch (System.Globalization.CultureNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsValidDateFormat(string format)
+    {
+        try
+        {
+            _ = DateTime.UnixEpoch.ToString(AssetDateFormatting.ToDotNetFormat(format),
+                System.Globalization.CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
 
     private static bool IsValidLatLong(string? value)
     {

@@ -49,7 +49,7 @@ public class AdminGeneralSettingsDto
     public int RefreshAlbumPeopleInterval { get; set; } = 12;
     public string? WeatherApiKey { get; set; } = string.Empty;
     public string? UnitSystem { get; set; } = "imperial";
-    public string? WeatherLatLong { get; set; } = "40.7128,74.0060";
+    public string? WeatherLatLong { get; set; } = "40.7128,-74.0060";
     public string? Webhook { get; set; }
 }
 

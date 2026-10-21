@@ -237,9 +237,8 @@ namespace ImmichFrame.WebApi.Controllers
                 }
             }
 
-            CultureInfo cultureInfo = new CultureInfo(_settings.Language);
-            string photoDateFormat = _settings.PhotoDateFormat!.Replace("''", "\\'");
-            string photoDate = randomAsset.LocalDateTime.ToString(photoDateFormat, cultureInfo) ?? string.Empty;
+            string photoDate = AssetDateFormatting.FormatPhotoDate(randomAsset.LocalDateTime,
+                _settings.PhotoDateFormat, _settings.Language);
 
             var locationFormat = _settings.ImageLocationFormat ?? "City,State,Country";
             var imageLocation = locationFormat
