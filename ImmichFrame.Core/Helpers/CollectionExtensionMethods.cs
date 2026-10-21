@@ -2,8 +2,6 @@ namespace ImmichFrame.Core.Helpers;
 
 public static class CollectionExtensionMethods
 {
-    private static readonly Random _random = new();
-    
     public static IEnumerable<T> TakeProportional<T>(this IEnumerable<T> enumerable, double proportion)
     {
         if (proportion <= 0) return [];
@@ -35,7 +33,7 @@ public static class CollectionExtensionMethods
 
         var totalCount = sourcesAndCounts.Sum(source => source.Count);
 
-        var randomIndex = _random.NextInt64(totalCount);
+        var randomIndex = Random.Shared.NextInt64(totalCount);
 
         foreach (var sourceAndCount in sourcesAndCounts)
         {
