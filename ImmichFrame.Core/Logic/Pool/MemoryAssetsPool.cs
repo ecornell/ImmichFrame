@@ -16,8 +16,9 @@ public class MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSetti
         var memoryAssets = new List<AssetResponseDto>();
         foreach (var memory in memories)
         {
-            var assets = memory.Assets.ToList();
-            var yearsAgo = searchDate.Year - memory.Data.Year;
+            var assets = (memory.Assets ?? []).ToList();
+            // Data is only populated for "on this day" memories.
+            int? yearsAgo = memory.Data != null ? searchDate.Year - memory.Data.Year : null;
 
             if (!accountSettings.ShowVideos)
             {
@@ -28,12 +29,25 @@ public class MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSetti
             {
                 if (asset.ExifInfo == null)
                 {
-                    var assetInfo = await immichApi.GetAssetInfoAsync(asset.Id, null, null, ct);
-                    asset.ExifInfo = assetInfo.ExifInfo;
-                    asset.People = assetInfo.People;
+                    // One asset's details failing to load (deleted meanwhile, transient error) must not
+                    // drop every memory; the asset is still shown, just without EXIF details.
+                    try
+                    {
+                        var assetInfo = await immichApi.GetAssetInfoAsync(asset.Id, null, null, ct);
+                        asset.ExifInfo = assetInfo?.ExifInfo;
+                        asset.People = assetInfo?.People ?? asset.People;
+                    }
+                    catch (Exception) when (!ct.IsCancellationRequested)
+                    {
+                    }
                 }
 
-                asset.ExifInfo.Description = $"{yearsAgo} {(yearsAgo == 1 ? "year" : "years")} ago";
+                if (yearsAgo is int years)
+                {
+                    // Immich can return an asset without EXIF even from the info endpoint.
+                    asset.ExifInfo ??= new ExifResponseDto();
+                    asset.ExifInfo.Description = $"{years} {(years == 1 ? "year" : "years")} ago";
+                }
             }
 
             memoryAssets.AddRange(assets);

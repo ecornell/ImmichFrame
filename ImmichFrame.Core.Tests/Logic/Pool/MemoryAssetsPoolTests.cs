@@ -113,6 +113,45 @@ public class MemoryAssetsPoolTests
     }
 
     [Test]
+    public async Task LoadAssets_AssetInfoWithoutExif_StillGetsDescription()
+    {
+        var memoryYear = DateTime.Now.Year - 3;
+        var memories = CreateSampleImageMemories(1, 1, false, memoryYear);
+        var assetId = memories[0].Assets.First().Id;
+        _mockImmichApi.Setup(x => x.SearchMemoriesAsync(It.IsAny<DateTimeOffset>(), null, null, null, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(memories);
+        _mockImmichApi.Setup(x => x.GetAssetInfoAsync(assetId, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetResponseDto { Id = assetId, ExifInfo = null });
+
+        var resultAsset = (await _memoryAssetsPool.GetAssets(1, CancellationToken.None)).First();
+
+        Assert.That(resultAsset.ExifInfo?.Description, Is.EqualTo("3 years ago"));
+    }
+
+    [Test]
+    public async Task LoadAssets_OneAssetInfoFails_OtherMemoriesStillLoad()
+    {
+        var memoryYear = DateTime.Now.Year - 1;
+        var memories = CreateSampleImageMemories(2, 2, false, memoryYear);
+        var failingId = memories[0].Assets.First().Id;
+        _mockImmichApi.Setup(x => x.SearchMemoriesAsync(It.IsAny<DateTimeOffset>(), null, null, null, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(memories);
+        _mockImmichApi.Setup(x => x.GetAssetInfoAsync(It.IsAny<Guid>(), null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, string? _, string? _, CancellationToken _) => new AssetResponseDto
+            {
+                Id = id,
+                ExifInfo = new ExifResponseDto { DateTimeOriginal = new DateTime(memoryYear, 1, 1) }
+            });
+        _mockImmichApi.Setup(x => x.GetAssetInfoAsync(failingId, null, null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("gone"));
+
+        var result = (await _memoryAssetsPool.GetAssets(4, CancellationToken.None)).ToList();
+
+        Assert.That(result, Has.Count.EqualTo(4));
+        Assert.That(result.All(a => a.ExifInfo?.Description == "1 year ago"), Is.True);
+    }
+
+    [Test]
     public async Task LoadAssets_DoesNotFetchAssetInfo_WhenExifInfoIsPresent()
     {
         // Arrange
