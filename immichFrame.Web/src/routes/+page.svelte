@@ -6,6 +6,10 @@
 	import { get } from 'svelte/store';
 	import { retryDelay } from '$lib/recovery';
 	import { onDestroy, onMount } from 'svelte';
+	import { replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
+	import { searchWithoutAuthSecret } from '$lib/url-params';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -32,6 +36,12 @@
 	}
 
 	onMount(() => {
+		// load() has saved the secret by now; take it out of the address bar and history.
+		const search = searchWithoutAuthSecret(window.location.href);
+		// The rule only accepts a bare resolve(); this is resolve('/') plus the kept query string.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve
+		if (search !== null) replaceState(`${resolve('/')}${search}`, page.state);
+
 		if (data.configLoaded) {
 			configLoaded = true;
 			watchForConfigChanges();
