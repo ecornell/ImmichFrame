@@ -31,11 +31,20 @@ public sealed class AssetShowHistory(TimeProvider? timeProvider = null) : IAsset
 
         // Shuffling first makes the stable sort break ties (e.g. never shown) at random.
         Random.Shared.Shuffle(assets);
-        AssetResponseDto[] ordered;
+
+        // Only the lookups need the lock; sorting a large library under it would stall every other
+        // pick and RecordShown for the duration.
+        var stamps = new long[assets.Length];
         lock (_gate)
         {
-            ordered = assets.OrderBy(asset => _lastShown.GetValueOrDefault(asset.Id, long.MinValue)).ToArray();
+            for (var i = 0; i < assets.Length; i++)
+                stamps[i] = _lastShown.GetValueOrDefault(assets[i].Id, long.MinValue);
         }
+
+        var ordered = Enumerable.Range(0, assets.Length)
+            .OrderBy(i => stamps[i])
+            .Select(i => assets[i])
+            .ToArray();
 
         var window = Math.Min(ordered.Length, Math.Max(requested, (int)Math.Ceiling(ordered.Length * WindowFraction)));
         var eligible = ordered[..window];
