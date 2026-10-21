@@ -28,6 +28,7 @@
 		withObjectUrlCleanup
 	} from '$lib/recovery';
 	import { afterFailedPick, AssetFailureTracker, AssetLoadError } from '$lib/asset-failures';
+	import { claimAutoReload, HEARTBEAT_CHECK_MS, SlideshowHeartbeat } from '$lib/heartbeat';
 
 	interface AssetsState {
 		assets: [string, api.AssetResponseDto, api.AssetFaceResponseDto[], api.AlbumResponseDto[]][];
@@ -68,6 +69,8 @@
 
 	const mediaFailures = new ConsecutiveMediaFailures();
 	const assetFailures = new AssetFailureTracker();
+	const heartbeat = new SlideshowHeartbeat();
+	let heartbeatInterval: number | undefined;
 	let errorSkipScheduled = false;
 	let watchdogTimer: number | undefined;
 	let activeTransitionController: AbortController | undefined;
@@ -348,6 +351,7 @@
 				isHandlingAssetTransition = false;
 				activeTransitionController = undefined;
 				clearTimeout(watchdogTimer);
+				heartbeat.beat();
 
 				if (pendingTransition) {
 					const next = pendingTransition;
@@ -672,6 +676,22 @@
 			}
 		}, RETRY_ON_ERROR_MS);
 
+		// Last resort: a slideshow that stops finishing transitions (a stuck await, a progress bar
+		// that never reports done) reloads itself. Uses the current slide's length, since a video
+		// can run far longer than the configured interval.
+		heartbeatInterval = window.setInterval(() => {
+			const wedged = heartbeat.isWedged({
+				slideDurationSeconds: currentDuration,
+				paused: userPaused && !isHandlingAssetTransition,
+				hidden: document.hidden,
+				authError
+			});
+			if (!wedged) return;
+			if (claimAutoReload(sessionStorage, Date.now()) > 0) return;
+			console.error('Slideshow heartbeat lost: reloading the page');
+			window.location.reload();
+		}, HEARTBEAT_CHECK_MS);
+
 		if ($configStore.primaryColor) {
 			document.documentElement.style.setProperty('--primary-color', $configStore.primaryColor);
 		}
@@ -704,6 +724,7 @@
 			window.removeEventListener('mousemove', showCursor);
 			window.removeEventListener('click', showCursor);
 			window.clearInterval(retryInterval);
+			window.clearInterval(heartbeatInterval);
 			window.clearTimeout(timeoutId);
 			window.clearTimeout(videoStallTimeout);
 			window.clearTimeout(watchdogTimer);
