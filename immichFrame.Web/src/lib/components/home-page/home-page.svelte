@@ -27,6 +27,7 @@
 		WATCHDOG_ABORT,
 		withObjectUrlCleanup
 	} from '$lib/recovery';
+	import { afterFailedPick, AssetFailureTracker, AssetLoadError } from '$lib/asset-failures';
 
 	interface AssetsState {
 		assets: [string, api.AssetResponseDto, api.AssetFaceResponseDto[], api.AlbumResponseDto[]][];
@@ -48,6 +49,8 @@
 	const MAX_ASSET_HISTORY = 250;
 	const MAX_RECENT_ASSETS = 1000;
 	const ASSET_REQUEST_ATTEMPTS = 4;
+	// Bounds how many broken assets one transition skips past before it reports the frame offline.
+	const MAX_ASSET_SKIPS_PER_TRANSITION = 3;
 	const RECENT_ASSETS_STORAGE_PREFIX = 'immichframe:recent-assets:';
 
 	let assetHistory: api.AssetResponseDto[] = $state([]);
@@ -64,6 +67,7 @@
 	let currentDuration: number = $state($configStore.interval ?? 20);
 
 	const mediaFailures = new ConsecutiveMediaFailures();
+	const assetFailures = new AssetFailureTracker();
 	let errorSkipScheduled = false;
 	let watchdogTimer: number | undefined;
 	let activeTransitionController: AbortController | undefined;
@@ -137,13 +141,19 @@
 				const promise = loadAsset(asset, assetController.signal);
 				assetPromisesDict[asset.id] = promise;
 				const timeout = window.setTimeout(() => assetController.abort(), ASSET_LOAD_TIMEOUT_MS);
+				// Registered before any transition awaits this promise, so the failure is recorded
+				// by the time pickAssets sees the rejection.
 				promise.then(
-					() => clearTimeout(timeout),
 					() => {
+						clearTimeout(timeout);
+						assetFailures.succeeded(asset.id);
+					},
+					(caught) => {
 						clearTimeout(timeout);
 						if (assetPromisesDict[asset.id] === promise) {
 							delete assetPromisesDict[asset.id];
 							delete assetPromiseControllers[asset.id];
+							assetFailures.failed(asset.id, caught);
 						}
 					}
 				);
@@ -350,16 +360,61 @@
 		}
 	};
 
+	/** Drops queued assets that keep failing, so one broken asset cannot stall the slideshow. */
+	function dropFailedAssets() {
+		const dropped = assetBacklog.filter((asset) => assetFailures.shouldSkip(asset.id));
+		if (!dropped.length) return;
+
+		console.warn(
+			'Skipping assets that failed to load:',
+			dropped.map((asset) => `${asset.id} (${assetFailures.lastKind(asset.id)})`).join(', ')
+		);
+		assetBacklog = assetBacklog.filter((asset) => !dropped.includes(asset));
+		for (const asset of dropped) assetFailures.skipped(asset.id);
+		// Counts them as shown, so the next sample from the server does not queue them right back.
+		recordRecentAssets(dropped);
+	}
+
 	async function getNextAssets(epoch: number, signal: AbortSignal) {
-		if (!assetBacklog.length && !(await loadAssets(signal, epoch))) return;
-		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
+		for (let skips = 0; ; skips++) {
+			dropFailedAssets();
+			if (!assetBacklog.length && !(await loadAssets(signal, epoch))) return;
+			if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
+			dropFailedAssets();
 
-		if (!assetBacklog.length) {
-			error = true;
-			errorMessage = 'No assets were found! Check your configuration.';
-			return;
+			if (!assetBacklog.length) {
+				if (skips > 0) {
+					// Everything the server offered just failed: keep the last photo and retry later.
+					markConnectionUnavailable();
+				} else {
+					error = true;
+					errorMessage = 'No assets were found! Check your configuration.';
+				}
+				return;
+			}
+
+			const committed = await showNextFromBacklog(epoch, signal);
+			if (committed !== 'failed') return;
+
+			const next = assetBacklog.slice(0, shouldUseSplitView(assetBacklog) ? 2 : 1);
+			const outcome = afterFailedPick(
+				next.map((asset) => asset.id),
+				assetFailures,
+				skips,
+				MAX_ASSET_SKIPS_PER_TRANSITION
+			);
+			if (outcome.authError) authError = true;
+			if (outcome.action === 'offline') {
+				markConnectionUnavailable();
+				return;
+			}
 		}
+	}
 
+	async function showNextFromBacklog(
+		epoch: number,
+		signal: AbortSignal
+	): Promise<'shown' | 'stale' | 'failed'> {
 		const useSplit = shouldUseSplitView(assetBacklog);
 		const count = useSplit ? 2 : 1;
 		const next = assetBacklog.slice(0, count);
@@ -371,11 +426,8 @@
 
 		await updateAssetPromises(next, nextBacklog, signal);
 		const nextState = await pickAssets(next, signal);
-		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return;
-		if (!nextState.loaded) {
-			markConnectionUnavailable();
-			return;
-		}
+		if (!transitionIsCurrent(epoch, transitionEpoch, signal)) return 'stale';
+		if (!nextState.loaded) return 'failed';
 
 		assetBacklog = nextBacklog;
 		assetHistory = nextHistory;
@@ -388,6 +440,7 @@
 		recoveryAttempts = 0;
 		nextRecoveryAt = 0;
 		recordRecentAssets(next);
+		return 'shown';
 	}
 
 	async function getPreviousAssets(epoch: number, signal: AbortSignal) {
@@ -518,7 +571,7 @@
 				{ signal }
 			);
 			if (req.status != 200) {
-				throw new Error(`Failed to load asset ${assetResponse.id}: status ${req.status}`);
+				throw new AssetLoadError(assetResponse.id, req.status);
 			}
 			assetUrl = getObjectUrl(req.data);
 		}
