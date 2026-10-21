@@ -1,13 +1,25 @@
 import { writable } from 'svelte/store';
+import { parseStoredValue } from './stored-value';
+
+function readStorage(key: string): string | null {
+	try {
+		return localStorage?.getItem(key) ?? null;
+	} catch {
+		return null; // storage disabled or blocked
+	}
+}
 
 function persistStore(key: string, defaultValue: string | null) {
-	const storedValue = localStorage?.getItem(key);
-	const initialValue: string = storedValue ? JSON.parse(storedValue) : defaultValue;
+	const initialValue = parseStoredValue(readStorage(key), defaultValue) as string;
 
 	const store = writable(initialValue);
 
 	store.subscribe((value) => {
-		localStorage?.setItem(key, JSON.stringify(value));
+		try {
+			localStorage?.setItem(key, JSON.stringify(value));
+		} catch {
+			// Storage full or blocked: the value still lives in memory for this session.
+		}
 	});
 
 	return store;
