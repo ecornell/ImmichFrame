@@ -30,6 +30,7 @@
 		withObjectUrlCleanup
 	} from '$lib/recovery';
 	import { afterFailedPick, AssetFailureTracker, AssetLoadError } from '$lib/asset-failures';
+	import { okArray } from '$lib/api-result';
 	import { claimAutoReload, HEARTBEAT_CHECK_MS, SlideshowHeartbeat } from '$lib/heartbeat';
 
 	interface AssetsState {
@@ -595,7 +596,7 @@
 						{ clientIdentifier: $clientIdentifierStore },
 						{ signal }
 					);
-					album = albumReq.data ?? [];
+					album = okArray<api.AlbumResponseDto>(albumReq);
 				}
 
 				// if the people array is already populated, there is no need to call the API again
@@ -605,7 +606,9 @@
 						{ clientIdentifier: $clientIdentifierStore },
 						{ signal }
 					);
-					assetResponse.people = assetInfoRequest.data.people;
+					// A failed lookup only loses the names; the photo itself still shows.
+					assetResponse.people =
+						assetInfoRequest.status === 200 ? (assetInfoRequest.data.people ?? []) : [];
 				}
 
 				let faces: api.AssetFaceResponseDto[] = [];
@@ -615,7 +618,7 @@
 						{ clientIdentifier: $clientIdentifierStore },
 						{ signal }
 					);
-					faces = facesRequest.data;
+					faces = okArray<api.AssetFaceResponseDto>(facesRequest);
 				}
 
 				return [assetUrl, assetResponse, faces, album] as [
