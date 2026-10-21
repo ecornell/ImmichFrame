@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
+	import { settingsFingerprint, shouldLeaveIdleSettings } from '$lib/settings-idle';
 	import * as api from '$lib/index';
 	import type {
 		AdminAccountUpdateDto,
@@ -77,13 +79,46 @@
 		{ value: 'metric', label: 'Metric (°C)' }
 	];
 
-	onMount(async () => {
+	// The form as last loaded, to tell edits apart from an untouched page. Empty until a load
+	// succeeds, so a page that failed to load counts as unedited.
+	let loadedFingerprint = '';
+	let lastInputAt = Date.now();
+
+	function hasUnsavedEdits() {
+		return loadedFingerprint !== '' && settingsFingerprint(general, accounts) !== loadedFingerprint;
+	}
+
+	onMount(() => {
 		// The bearer header is installed per-component in this app, not globally.
 		api.init();
-		await load();
+		void load();
+
+		// On a touch frame an accidental tap on the settings button would otherwise leave it here
+		// for good. Unsaved edits keep the page open.
+		const markInput = () => (lastInputAt = Date.now());
+		const inputEvents = ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart'] as const;
+		for (const name of inputEvents) {
+			window.addEventListener(name, markInput, { passive: true, capture: true });
+		}
+		const idleCheck = window.setInterval(() => {
+			const leave = shouldLeaveIdleSettings({
+				idleMs: Date.now() - lastInputAt,
+				dirty: hasUnsavedEdits(),
+				saving
+			});
+			if (leave) void goto(resolve('/'));
+		}, 30_000);
+
+		return () => {
+			window.clearInterval(idleCheck);
+			for (const name of inputEvents) {
+				window.removeEventListener(name, markInput, { capture: true });
+			}
+		};
 	});
 
 	async function load() {
+		let loaded = false;
 		loading = true;
 		loadError = '';
 		try {
@@ -93,10 +128,18 @@
 				return;
 			}
 			applyView(res.data);
+			loaded = true;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load settings.';
 		} finally {
 			loading = false;
+		}
+
+		if (loaded) {
+			// Taken once the form has rendered: a field that settles its bound value on mount (a
+			// <select> bound to an unset value picks its first option) must not count as an edit.
+			await tick();
+			loadedFingerprint = settingsFingerprint(general, accounts);
 		}
 	}
 
