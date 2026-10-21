@@ -45,6 +45,7 @@ General:
   Webcalendars:  # string[]
     - UUID
   # Interval in hours. Determines how often images are pulled from a album/person in immich.
+  # Values below 1 are treated as 1.
   RefreshAlbumPeopleInterval: 12  # int
   # Date format. See https://date-fns.org/v4.1.0/docs/format for more information.
   PhotoDateFormat: 'MM/dd/yyyy'  # string

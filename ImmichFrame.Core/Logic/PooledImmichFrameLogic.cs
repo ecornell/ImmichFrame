@@ -59,8 +59,13 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
         _pool = BuildPool(accountSettings);
     }
 
-    private static TimeSpan RefreshInterval(int hours)
-        => hours > 0 ? TimeSpan.FromHours(hours) : TimeSpan.FromMilliseconds(1);
+    /// <summary>
+    /// The album/people/tag cache lifetime. At least an hour: 0 used to mean a 1 ms lifetime, which
+    /// re-downloaded every album, person and tag listing from Immich on every single pick. The same
+    /// floor already applies to the album names cached by the asset controller.
+    /// </summary>
+    internal static TimeSpan RefreshInterval(int hours)
+        => TimeSpan.FromHours(Math.Max(1, hours));
 
     public IAccountSettings AccountSettings { get; }
 

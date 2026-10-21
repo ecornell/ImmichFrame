@@ -163,6 +163,15 @@ public class PooledImmichFrameLogicImageTests
         Assert.That(Directory.EnumerateFiles(_cacheDirectory), Is.Empty);
     }
 
+    [TestCase(0, 1)]
+    [TestCase(-5, 1)]
+    [TestCase(1, 1)]
+    [TestCase(12, 12)]
+    public void RefreshInterval_IsAtLeastOneHour(int configured, int expectedHours)
+    {
+        Assert.That(PooledImmichFrameLogic.RefreshInterval(configured), Is.EqualTo(TimeSpan.FromHours(expectedHours)));
+    }
+
     private sealed class ManualTimeProvider : TimeProvider
     {
         public DateTimeOffset Now { get; set; }
