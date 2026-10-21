@@ -74,14 +74,14 @@ public class AllAssetsPoolTests
     {
         // Arrange
         var stats = new AssetStatsResponseDto { Images = 100, Videos = 40 };
-        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
 
         // Act
         var count = await _allAssetsPool.GetAssetCount();
 
         // Assert
         Assert.That(count, Is.EqualTo(100));
-        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>()), Times.Once);
         _mockApiCache.Verify(cache => cache.GetOrAddAsync(nameof(AllAssetsPool), It.IsAny<Func<Task<AssetStatsResponseDto>>>()), Times.Once);
     }
 
@@ -90,7 +90,7 @@ public class AllAssetsPoolTests
     {
         // Arrange
         var stats = new AssetStatsResponseDto { Images = 100, Videos = 40 };
-        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
 
         _mockAccountSettings.SetupGet(s => s.ShowVideos).Returns(true);
 
@@ -99,7 +99,7 @@ public class AllAssetsPoolTests
 
         // Assert
         Assert.That(count, Is.EqualTo(140));
-        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>()), Times.Once);
         _mockApiCache.Verify(cache => cache.GetOrAddAsync(nameof(AllAssetsPool), It.IsAny<Func<Task<AssetStatsResponseDto>>>()), Times.Once);
     }
 
@@ -110,7 +110,6 @@ public class AllAssetsPoolTests
         var requestedImageCount = 5;
         var requestedVideoCount = 8;
         var rating = 3;
-        _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
         _mockAccountSettings.SetupGet(s => s.Rating).Returns(3);
         var returnedAssets = CreateSampleImageAssets(requestedImageCount, rating: rating);
         returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, "video", rating: rating));
@@ -128,7 +127,7 @@ public class AllAssetsPoolTests
                 dto.Type == AssetTypeEnum.IMAGE &&
                 dto.WithExif == true &&
                 dto.WithPeople == true &&
-                dto.Visibility == AssetVisibility.Archive && // ShowArchived = true
+                dto.Visibility == AssetVisibility.Timeline && // ShowArchived = false
                 dto.Rating == rating
             ), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -140,7 +139,6 @@ public class AllAssetsPoolTests
         var requestedImageCount = 5;
         var requestedVideoCount = 8;
         var rating = 3;
-        _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
         _mockAccountSettings.SetupGet(s => s.ShowVideos).Returns(true);
         _mockAccountSettings.SetupGet(s => s.Rating).Returns(3);
         var returnedAssets = CreateSampleImageAssets(requestedImageCount, rating: rating);
@@ -159,9 +157,62 @@ public class AllAssetsPoolTests
                 dto.Type == null &&
                 dto.WithExif == true &&
                 dto.WithPeople == true &&
-                dto.Visibility == AssetVisibility.Archive && // ShowArchived = true
+                dto.Visibility == AssetVisibility.Timeline && // ShowArchived = false
                 dto.Rating == rating
             ), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public async Task GetAssetCount_ShowArchived_CountsTimelineAndArchive()
+    {
+        _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 100, Videos = 40 });
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Archive, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 20, Videos = 5 });
+
+        Assert.That(await _allAssetsPool.GetAssetCount(), Is.EqualTo(120));
+    }
+
+    [Test]
+    public async Task GetAssets_ShowArchived_SearchesTimelineAndArchive()
+    {
+        // ShowArchived includes archived assets; it does not restrict the slideshow to them.
+        _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 500 });
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Archive, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 500 });
+        _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RandomSearchDto d, CancellationToken _) =>
+                CreateSampleImageAssets(d.Size ?? 0, d.Visibility == AssetVisibility.Archive ? "archived" : "timeline"));
+
+        var result = (await _allAssetsPool.GetAssets(200)).ToList();
+
+        Assert.That(result, Has.Count.EqualTo(200));
+        var archived = result.Count(a => CreateSampleImageAssets(200, "archived").Any(x => x.Id == a.Id));
+        // Half the library is archived; a share far from either extreme shows both were searched.
+        Assert.That(archived, Is.InRange(40, 160));
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Visibility == AssetVisibility.Timeline), It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Visibility == AssetVisibility.Archive), It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Visibility == null), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Test]
+    public async Task GetAssets_ShowArchived_EmptyArchive_SearchesOnlyTheTimeline()
+    {
+        _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Timeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 50 });
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, AssetVisibility.Archive, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetStatsResponseDto { Images = 0 });
+        _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RandomSearchDto d, CancellationToken _) => CreateSampleImageAssets(d.Size ?? 0));
+
+        var result = (await _allAssetsPool.GetAssets(5)).ToList();
+
+        Assert.That(result, Has.Count.EqualTo(5));
+        _mockImmichApi.Verify(api => api.SearchRandomAsync(It.Is<RandomSearchDto>(d => d.Visibility == AssetVisibility.Archive), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Test]
