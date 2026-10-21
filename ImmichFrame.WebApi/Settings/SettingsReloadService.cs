@@ -1,6 +1,7 @@
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Logic;
 using ImmichFrame.Core.Logic.AccountSelection;
+using ImmichFrame.WebApi.Helpers.Config;
 using ImmichFrame.WebApi.Models;
 
 namespace ImmichFrame.WebApi.Settings;
@@ -40,6 +41,7 @@ public sealed class SettingsReloadService(
     IAssetAccountTracker tracker,
     IEnumerable<ISettingsResettable> resettables,
     ConfigLocation location,
+    ConfigSourceInfo configSource,
     ILogger<SettingsReloadService> logger)
 {
     private readonly SemaphoreSlim _saveGate = new(1, 1);
@@ -171,6 +173,17 @@ public sealed class SettingsReloadService(
         foreach (var shadowed in location.ShadowedFiles())
         {
             warnings.Add($"'{Path.GetFileName(shadowed)}' is now ignored: Settings.json takes precedence when both exist.");
+        }
+
+        // The editor can only write Settings.json, and the loader ranks that above environment
+        // variables. Saving is still allowed (refusing would lock env-var users out of the editor),
+        // but the consequence must be visible: the env values, secrets included, are copied into the
+        // file and later edits to the variables stop having any effect.
+        if (configSource.Source == ConfigSource.EnvironmentVariables)
+        {
+            warnings.Add(File.Exists(location.SettingsJsonPath)
+                ? "Settings.json now takes precedence over the environment variables this configuration was started from; changes to those variables are ignored until Settings.json is removed."
+                : "This configuration was read from environment variables. Saving writes it, including API keys and the authentication secret, to Settings.json, which then takes precedence over the environment variables on every start.");
         }
 
         return warnings;

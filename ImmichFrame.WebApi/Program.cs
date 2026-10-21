@@ -75,8 +75,14 @@ builder.Services.AddSingleton(srv =>
 
 // Bootstrap seed only — this is the configuration as it was on disk at startup and it does NOT
 // track edits made through the admin API. Inject IGeneralSettings (or SettingsStore) for live values.
+builder.Services.AddSingleton<ConfigSourceInfo>();
 builder.Services.AddSingleton<IServerSettings>(srv =>
-    srv.GetRequiredService<ConfigLoader>().LoadConfig(srv.GetRequiredService<ConfigLocation>().Directory));
+{
+    var loader = srv.GetRequiredService<ConfigLoader>();
+    var settings = loader.LoadConfig(srv.GetRequiredService<ConfigLocation>().Directory);
+    srv.GetRequiredService<ConfigSourceInfo>().Source = loader.LastSource;
+    return settings;
+});
 
 // Live settings infrastructure
 builder.Services.AddSingleton<SettingsStore>();

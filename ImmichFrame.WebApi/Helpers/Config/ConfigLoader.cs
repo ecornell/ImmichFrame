@@ -9,6 +9,9 @@ namespace ImmichFrame.WebApi.Helpers.Config;
 
 public class ConfigLoader(ILogger<ConfigLoader> _logger)
 {
+    /// <summary>Where the configuration returned by the last <see cref="LoadConfig"/> came from.</summary>
+    public ConfigSource LastSource { get; private set; } = ConfigSource.Unknown;
+
     private string FindConfigFile(string dir, params string[] fileNames)
     {
         if (!Directory.Exists(dir))
@@ -28,6 +31,8 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
     }
     private IServerSettings LoadConfigRaw(string configPath)
     {
+        LastSource = ConfigSource.Unknown;
+
         var jsonConfigPath = FindConfigFile(configPath, "Settings.json");
         if (File.Exists(jsonConfigPath))
         {
@@ -38,7 +43,9 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
                 // would never run.
                 if (JsonHasV2Sections(jsonConfigPath))
                 {
-                    return LoadConfigJson<ServerSettings>(jsonConfigPath);
+                    var v2 = LoadConfigJson<ServerSettings>(jsonConfigPath);
+                    LastSource = ConfigSource.Json;
+                    return v2;
                 }
 
                 _logger.LogInformation("Settings.json has no 'General' or 'Accounts' section; reading it as the legacy flat format.");
@@ -51,6 +58,7 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
             try
             {
                 var v1 = LoadConfigJson<ServerSettingsV1>(jsonConfigPath);
+                LastSource = ConfigSource.Json;
                 return new ServerSettingsV1Adapter(v1);
             }
             catch (Exception e)
@@ -67,7 +75,9 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
                 // Same reasoning as JSON: the deserializer ignores unmatched properties.
                 if (YamlHasV2Sections(ymlConfigPath))
                 {
-                    return LoadConfigYaml<ServerSettings>(ymlConfigPath);
+                    var v2 = LoadConfigYaml<ServerSettings>(ymlConfigPath);
+                    LastSource = ConfigSource.Yaml;
+                    return v2;
                 }
 
                 _logger.LogInformation("{File} has no 'General' or 'Accounts' section; reading it as the legacy flat format.", Path.GetFileName(ymlConfigPath));
@@ -80,6 +90,7 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
             try
             {
                 var v1 = LoadConfigYaml<ServerSettingsV1>(ymlConfigPath);
+                LastSource = ConfigSource.Yaml;
                 return new ServerSettingsV1Adapter(v1);
             }
             catch (Exception e)
@@ -91,6 +102,7 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
         try
         {
             var v1 = LoadConfigFromDictionary<ServerSettingsV1>(Environment.GetEnvironmentVariables());
+            LastSource = ConfigSource.EnvironmentVariables;
             return new ServerSettingsV1Adapter(v1);
         }
         catch (Exception e)

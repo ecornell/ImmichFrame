@@ -479,4 +479,57 @@ public class SettingsWriteTests
         SettingsValidator.TryValidate(SettingsWith(), out var problems).Should().BeFalse();
         problems.Should().Contain(p => p.Contains("At least one Immich account"));
     }
+
+    private SettingsReloadService ReloadServiceFor(ConfigSource source) =>
+        // CollectWarnings only consults the location and the config source.
+        new(null!, _writer, null!, null!, null!, [], _location, new ConfigSourceInfo { Source = source },
+            NullLogger<SettingsReloadService>.Instance);
+
+    [Test]
+    public void LoadConfig_FromEnvironmentVariables_RecordsTheSource()
+    {
+        Environment.SetEnvironmentVariable("ImmichServerUrl", "http://env.example");
+        Environment.SetEnvironmentVariable("ApiKey", "env-key");
+        try
+        {
+            var config = _loader.LoadConfig(_configDir);
+
+            config.Accounts.Single().ImmichServerUrl.Should().Be("http://env.example");
+            _loader.LastSource.Should().Be(ConfigSource.EnvironmentVariables);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ImmichServerUrl", null);
+            Environment.SetEnvironmentVariable("ApiKey", null);
+        }
+    }
+
+    [Test]
+    public void LoadConfig_FromSettingsJson_RecordsTheSource()
+    {
+        _writer.Write(SettingsWith(new ServerAccountSettings { ImmichServerUrl = "http://a.example", ApiKey = "k" }));
+
+        _loader.LoadConfig(_configDir);
+
+        _loader.LastSource.Should().Be(ConfigSource.Json);
+    }
+
+    [Test]
+    public void CollectWarnings_EnvVarConfig_WarnsThatSavingShadowsTheVariables()
+    {
+        var service = ReloadServiceFor(ConfigSource.EnvironmentVariables);
+
+        service.CollectWarnings().Should().ContainSingle(w => w.Contains("environment variables") && w.Contains("Saving"));
+
+        // Once a save has written the file, the warning says the variables are now ignored.
+        _writer.Write(SettingsWith(new ServerAccountSettings { ImmichServerUrl = "http://a.example", ApiKey = "k" }));
+        service.CollectWarnings().Should().ContainSingle(w => w.Contains("ignored until Settings.json is removed"));
+    }
+
+    [TestCase(ConfigSource.Json)]
+    [TestCase(ConfigSource.Unknown)]
+    public void CollectWarnings_FileConfig_HasNoEnvironmentWarning(ConfigSource source)
+    {
+        ReloadServiceFor(source).CollectWarnings().Should().BeEmpty();
+    }
 }
