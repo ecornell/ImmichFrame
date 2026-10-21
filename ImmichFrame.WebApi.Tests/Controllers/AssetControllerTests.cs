@@ -431,6 +431,39 @@ namespace ImmichFrame.WebApi.Tests.Controllers
                 It.Is<IWebhookNotification>(n => n is AssetRequestedNotification
                     && ((AssetRequestedNotification)n).RequestedAssetId == assetId)), times);
 
+        [Test]
+        public async Task GetAssetInfo_AssetInNoAccount_Returns404()
+        {
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetAssetInfoById(It.IsAny<Guid>()))
+                .ThrowsAsync(new ImmichFrame.Core.Exceptions.AssetNotFoundException());
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync($"/api/Asset/{Guid.NewGuid()}/AssetInfo");
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.That(json.RootElement.GetProperty("status").GetInt32(), Is.EqualTo(404));
+        }
+
+        [TestCase(401)]
+        [TestCase(403)]
+        [TestCase(500)]
+        public async Task GetAsset_ImmichRejectsRequest_Returns502WithoutUpstreamBody(int immichStatus)
+        {
+            // Passing Immich's 401 through would look like ImmichFrame's own auth failed.
+            _mockLogic = CreateMockLogic();
+            _mockLogic.Setup(l => l.GetAsset(It.IsAny<Guid>(), It.IsAny<AssetTypeEnum?>(), It.IsAny<string?>()))
+                .ThrowsAsync(new ApiException("upstream secret body", immichStatus, "upstream secret body",
+                    new Dictionary<string, IEnumerable<string>>(), null!));
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync($"/api/Asset/{Guid.NewGuid()}/Asset");
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadGateway));
+            Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("upstream secret body"));
+        }
+
         private static Mock<IImmichFrameLogic> CreateMockLogic()
         {
             var mock = new Mock<IImmichFrameLogic>();

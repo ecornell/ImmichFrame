@@ -121,7 +121,7 @@ builder.Services.AddSingleton<IImmichFrameLogic>(srv =>
 
 // Remembers recent webhook notifications so each shown asset notifies once (AssetController).
 builder.Services.AddMemoryCache();
-builder.Services.AddControllers();
+builder.Services.AddControllers(options => options.Filters.Add<ImmichExceptionFilter>());
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options => options.SchemaFilter<ImmichFrame.WebApi.Helpers.NoReadOnlySchemaFilter>());
