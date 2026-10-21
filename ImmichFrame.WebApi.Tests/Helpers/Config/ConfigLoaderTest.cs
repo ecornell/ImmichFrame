@@ -68,6 +68,95 @@ public class ConfigLoaderTest
         VerifyConfig(config, true, false);
     }
 
+    private static string NewConfigDir()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"immichframe-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    [Test]
+    public void LoadConfig_V1SettingsJson_FallsBackToLegacyFormat()
+    {
+        var dir = NewConfigDir();
+        try
+        {
+            File.Copy(Path.Combine(_testDataPath, "Resources/TestV1.json"), Path.Combine(dir, "Settings.json"));
+
+            var config = _configLoader.LoadConfig(dir);
+
+            Assert.That(config, Is.InstanceOf<ServerSettingsV1Adapter>());
+            VerifyConfig(config, false, true);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Test]
+    public void LoadConfig_V1SettingsYaml_FallsBackToLegacyFormat()
+    {
+        var dir = NewConfigDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Settings.yml"),
+                "ImmichServerUrl: http://v1.example\nApiKey: v1-key\nInterval: 9\n");
+
+            var config = _configLoader.LoadConfig(dir);
+
+            Assert.That(config, Is.InstanceOf<ServerSettingsV1Adapter>());
+            var account = config.Accounts.Single();
+            Assert.That(account.ImmichServerUrl, Is.EqualTo("http://v1.example"));
+            Assert.That(account.ApiKey, Is.EqualTo("v1-key"));
+            Assert.That(config.GeneralSettings.Interval, Is.EqualTo(9));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Test]
+    public void LoadConfig_V2JsonWithEmptyAccounts_StaysV2()
+    {
+        // A V2 file with no accounts yet must not be misread as V1 (which would invent an account
+        // with an empty URL); the settings editor is how the first account gets added.
+        var dir = NewConfigDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Settings.json"), "{\"Accounts\": []}");
+
+            var config = _configLoader.LoadConfig(dir);
+
+            Assert.That(config, Is.InstanceOf<ServerSettings>());
+            Assert.That(config.Accounts, Is.Empty);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Test]
+    public void LoadConfig_V2Json_LoadsAsCurrentVersion()
+    {
+        var dir = NewConfigDir();
+        try
+        {
+            File.Copy(Path.Combine(_testDataPath, "Resources/TestV2_NoGeneral.json"), Path.Combine(dir, "Settings.json"));
+
+            var config = _configLoader.LoadConfig(dir);
+
+            Assert.That(config, Is.InstanceOf<ServerSettings>());
+            Assert.That(config.Accounts, Is.Not.Empty);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
     private void VerifyConfig(IServerSettings serverSettings, bool usePrefix, bool expectNullApiKeyFile)
     {
         VerifyProperties(serverSettings.GeneralSettings);

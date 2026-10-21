@@ -33,7 +33,15 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
         {
             try
             {
-                return LoadConfigJson<ServerSettings>(jsonConfigPath);
+                // System.Text.Json ignores unknown keys, so a flat V1 file would otherwise "succeed"
+                // as a V2 config with no General section and no accounts, and the V1 branch below
+                // would never run.
+                if (JsonHasV2Sections(jsonConfigPath))
+                {
+                    return LoadConfigJson<ServerSettings>(jsonConfigPath);
+                }
+
+                _logger.LogInformation("Settings.json has no 'General' or 'Accounts' section; reading it as the legacy flat format.");
             }
             catch (Exception e)
             {
@@ -56,7 +64,13 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
         {
             try
             {
-                return LoadConfigYaml<ServerSettings>(ymlConfigPath);
+                // Same reasoning as JSON: the deserializer ignores unmatched properties.
+                if (YamlHasV2Sections(ymlConfigPath))
+                {
+                    return LoadConfigYaml<ServerSettings>(ymlConfigPath);
+                }
+
+                _logger.LogInformation("{File} has no 'General' or 'Accounts' section; reading it as the legacy flat format.", Path.GetFileName(ymlConfigPath));
             }
             catch (Exception e)
             {
@@ -85,6 +99,24 @@ public class ConfigLoader(ILogger<ConfigLoader> _logger)
         }
 
         throw new ImmichFrameException("Failed to load configuration");
+    }
+
+    // The V2 schema is recognised by its top-level sections, not by their values: a V2 file with an
+    // empty Accounts list is a valid (if not yet useful) config the settings editor can complete,
+    // whereas reading it as V1 would invent one account with an empty server URL.
+    private static readonly string[] V2Sections = ["General", "Accounts"];
+
+    internal static bool JsonHasV2Sections(string path)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        return doc.RootElement.ValueKind == JsonValueKind.Object &&
+               doc.RootElement.EnumerateObject().Any(p => V2Sections.Contains(p.Name, StringComparer.Ordinal));
+    }
+
+    internal static bool YamlHasV2Sections(string path)
+    {
+        var root = new DeserializerBuilder().Build().Deserialize<Dictionary<string, object?>>(File.ReadAllText(path));
+        return root != null && root.Keys.Any(k => V2Sections.Contains(k, StringComparer.Ordinal));
     }
 
     internal T LoadConfigFromDictionary<T>(IDictionary env) where T : IConfigSettable, new()
