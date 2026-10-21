@@ -68,8 +68,11 @@ async function getAuthSecret(timeoutMs = 2000) {
 self.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url);
 
-	// Intercept video streaming requests to add Authorization header
-	if (url.pathname.match(/^\/api\/Asset\/[^/]+\/Asset$/)) {
+	// Intercept video streaming requests to add Authorization header. Everything else is left to
+	// the browser: nothing is cached, so routing other requests (API POSTs included) through
+	// here only added overhead, and the old caches.match fallback resolved to undefined offline,
+	// which turned a plain network error into a TypeError from respondWith.
+	if (event.request.method === 'GET' && url.pathname.match(/^\/api\/Asset\/[^/]+\/Asset$/)) {
 		event.respondWith(
 			(async () => {
 				const secret = await getAuthSecret();
@@ -94,9 +97,5 @@ self.addEventListener('fetch', (event) => {
 				return fetch(modifiedRequest);
 			})()
 		);
-		return;
 	}
-
-	// Basic network-first strategy for other requests
-	event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });
