@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Helpers;
@@ -6,31 +8,109 @@ using Microsoft.Extensions.Logging;
 
 namespace ImmichFrame.Core.Logic.AccountSelection;
 
-public class TotalAccountImagesSelectionStrategy(
-    ILogger<TotalAccountImagesSelectionStrategy> _logger,
-    IAssetAccountTracker _tracker,
-    IList<IAccountImmichFrameLogic> _accounts) : IAccountSelectionStrategy
+/// <summary>
+/// Picks accounts in proportion to their asset counts.
+/// </summary>
+/// <remarks>
+/// An account whose Immich server fails (unreachable, rejected key, ...) is weighted 0 for
+/// <see cref="FailureCooldown"/> rather than failing the request, so the remaining accounts keep the
+/// slideshow going. After the cooldown it is tried again, which is how it recovers once its server
+/// is back. Without the cooldown every pick would wait out the HTTP timeout on a dead server.
+/// </remarks>
+public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
 {
+    internal static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(60);
+
+    private readonly ILogger<TotalAccountImagesSelectionStrategy> _logger;
+    private readonly IAssetAccountTracker _tracker;
+    private readonly IList<IAccountImmichFrameLogic> _accounts;
+    private readonly TimeProvider _time;
+    private readonly ConcurrentDictionary<IAccountImmichFrameLogic, DateTimeOffset> _failedUntil = new();
+
+    public TotalAccountImagesSelectionStrategy(
+        ILogger<TotalAccountImagesSelectionStrategy> logger,
+        IAssetAccountTracker tracker,
+        IList<IAccountImmichFrameLogic> accounts)
+        : this(logger, tracker, accounts, TimeProvider.System)
+    {
+    }
+
+    internal TotalAccountImagesSelectionStrategy(
+        ILogger<TotalAccountImagesSelectionStrategy> logger,
+        IAssetAccountTracker tracker,
+        IList<IAccountImmichFrameLogic> accounts,
+        TimeProvider time)
+    {
+        _logger = logger;
+        _tracker = tracker;
+        _accounts = accounts;
+        _time = time;
+    }
+
     public async Task<(IAccountImmichFrameLogic, AssetResponseDto)?> GetNextAsset()
     {
-        var chosen = await _accounts.ChooseOne(GetTotalForAccount);
-        if (chosen == null)
+        ExceptionDispatchInfo? lastFailure = null;
+
+        // A chosen account can still fail after its (cached) count succeeded; it is then cooled down
+        // and the pick is retried among the rest.
+        for (var attempt = 0; attempt < Math.Max(1, _accounts.Count); attempt++)
         {
-            // ChooseOne has nothing to pick when the weights sum to zero: no accounts, or every
-            // account reports an empty library. That is "no asset", not a server error.
-            _logger.LogDebug("No account has any assets to choose from");
+            var chosen = await _accounts.ChooseOne(GetTotalForAccount);
+            if (chosen == null)
+            {
+                // ChooseOne has nothing to pick when the weights sum to zero: no accounts, every
+                // account reports an empty library, or every account is failing.
+                lastFailure?.Throw();
+                _logger.LogDebug("No account has any assets to choose from");
+                return null;
+            }
+
+            AssetResponseDto? asset;
+            try
+            {
+                asset = await chosen.GetNextAsset();
+            }
+            catch (Exception ex)
+            {
+                MarkFailed(chosen, ex);
+                lastFailure = ExceptionDispatchInfo.Capture(ex);
+                continue;
+            }
+
+            if (asset != null)
+            {
+                await _tracker.RecordAssetLocation(chosen, asset.Id);
+                return (chosen, asset);
+            }
+
+            _logger.LogDebug("No next asset found");
             return null;
         }
 
-        var asset = await chosen.GetNextAsset();
-        if (asset != null)
-        {
-            await _tracker.RecordAssetLocation(chosen, asset.Id);
-            return (chosen, asset);
-        }
-
-        _logger.LogDebug("No next asset found");
+        lastFailure?.Throw();
         return null;
+    }
+
+    private bool IsCoolingDown(IAccountImmichFrameLogic account) =>
+        _failedUntil.TryGetValue(account, out var until) && _time.GetUtcNow() < until;
+
+    private void MarkFailed(IAccountImmichFrameLogic account, Exception ex)
+    {
+        var alreadyFailing = _failedUntil.ContainsKey(account);
+        _failedUntil[account] = _time.GetUtcNow() + FailureCooldown;
+
+        // Warn once per outage, not on every retry.
+        if (alreadyFailing)
+            _logger.LogDebug("Account [{account}] is still failing: {message}", account, ex.Message);
+        else
+            _logger.LogWarning("Account [{account}] failed and is skipped for {cooldown}s: {message}",
+                account, FailureCooldown.TotalSeconds, ex.Message);
+    }
+
+    private void MarkHealthy(IAccountImmichFrameLogic account)
+    {
+        if (_failedUntil.TryRemove(account, out _))
+            _logger.LogInformation("Account [{account}] has recovered", account);
     }
 
     private async Task<(IList<long>, long)> GetWeights(IList<IAccountImmichFrameLogic> accounts)
@@ -52,9 +132,36 @@ public class TotalAccountImagesSelectionStrategy(
         return totals.Select(t => (double)t / sum).ToList();
     }
 
-    private Task<long> GetTotalForAccount(IImmichFrameLogic account)
+    private async Task<long> GetTotalForAccount(IAccountImmichFrameLogic account)
     {
-        return account.GetTotalAssets();
+        if (IsCoolingDown(account)) return 0;
+
+        try
+        {
+            var total = await account.GetTotalAssets();
+            MarkHealthy(account);
+            return total;
+        }
+        catch (Exception ex)
+        {
+            MarkFailed(account, ex);
+            return 0;
+        }
+    }
+
+    private async Task<IEnumerable<AssetResponseDto>> GetAssetsForAccount(IAccountImmichFrameLogic account)
+    {
+        if (IsCoolingDown(account)) return [];
+
+        try
+        {
+            return await account.GetAssets();
+        }
+        catch (Exception ex)
+        {
+            MarkFailed(account, ex);
+            return [];
+        }
     }
 
     public async Task<IEnumerable<(IAccountImmichFrameLogic, AssetResponseDto)>> GetAssets()
@@ -68,7 +175,7 @@ public class TotalAccountImagesSelectionStrategy(
         var proportions = await GetProportions(_accounts);
         var maxAccount = proportions.Max();
         var adjustedProportions = proportions.Select(x => x / maxAccount).ToList();
-        var assetLists = _accounts.Select(account => account.GetAssets()).ToList();
+        var assetLists = _accounts.Select(GetAssetsForAccount).ToList();
 
         var taskList = assetLists
             .Zip(_accounts, adjustedProportions)

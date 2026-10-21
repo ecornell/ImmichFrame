@@ -85,7 +85,7 @@ Production-specific values and the rollback procedure are documented in
 
 The V1 path is the flat, single-account legacy layout; the adapters in `Helpers/Config/ServerSettingsV1.cs` project it onto the current `General` + `Accounts[]` shape. **Any new setting must be added to `GeneralSettings`/`ServerAccountSettings` and, if it existed in V1, wired through the adapters.** Client-visible settings also need to reach `ClientSettingsDto`, which is what the SPA consumes via `GET /api/Config`.
 
-DI then registers the settings interfaces as singletons layered from the loaded `IServerSettings`: `IGeneralSettings` → `IClientSettings` / `IServerBehaviorSettings`. Startup aborts (`Environment.Exit(1)`) if any configured Immich server is unreachable or older than `ImmichServerVersionChecker.MinimumSupportedMajorVersion`.
+DI then registers the settings interfaces as singletons layered from the loaded `IServerSettings`: `IGeneralSettings` → `IClientSettings` / `IServerBehaviorSettings`. Startup aborts (`Environment.Exit(1)`) if a reachable Immich server is older than `ImmichServerVersionChecker.MinimumSupportedMajorVersion`; an unreachable server is only logged, and `TotalAccountImagesSelectionStrategy` weights a failing account 0 for a cooldown so the other accounts keep serving.
 
 ### Asset selection: pools and accounts
 

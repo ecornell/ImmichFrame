@@ -30,7 +30,8 @@ public interface IImmichServerProbe
 /// </summary>
 /// <remarks>
 /// This type never terminates the process — deciding what an incompatible server means is the
-/// caller's business. Startup still exits; a failed save just reports back to the user.
+/// caller's business. Startup exits only for a reachable but too-old server; a failed save just
+/// reports back to the user.
 /// </remarks>
 public sealed class ImmichServerProbe(
     IHttpClientFactory httpClientFactory,

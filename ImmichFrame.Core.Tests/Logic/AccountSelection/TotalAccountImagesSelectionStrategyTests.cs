@@ -137,6 +137,86 @@ namespace ImmichFrame.Core.Tests.Logic.AccountSelection
             account2.Verify(a => a.GetNextAsset(), Times.Never);
         }
 
+        private sealed class ManualTimeProvider : TimeProvider
+        {
+            public DateTimeOffset Now { get; set; } = DateTimeOffset.UnixEpoch;
+            public override DateTimeOffset GetUtcNow() => Now;
+        }
+
+        [Test]
+        public async Task GetNextAsset_AccountCountFails_OtherAccountsKeepServing()
+        {
+            var time = new ManualTimeProvider();
+            var asset = CreateAsset();
+            var healthy = CreateAccount(10, [asset]);
+            healthy.Setup(a => a.GetNextAsset()).ReturnsAsync(asset);
+            var failing = new Mock<IAccountImmichFrameLogic>();
+            failing.Setup(a => a.GetTotalAssets()).ThrowsAsync(new HttpRequestException("down"));
+            var strategy = new TotalAccountImagesSelectionStrategy(NullLogger<TotalAccountImagesSelectionStrategy>.Instance,
+                _mockTracker.Object, [failing.Object, healthy.Object], time);
+
+            for (var i = 0; i < 5; i++)
+            {
+                var result = await strategy.GetNextAsset();
+                Assert.That(result!.Value.Item1, Is.SameAs(healthy.Object));
+            }
+
+            // Cooled down: not hammered on every pick.
+            failing.Verify(a => a.GetTotalAssets(), Times.Once);
+            failing.Verify(a => a.GetNextAsset(), Times.Never);
+
+            // Retried after the cooldown, and used again once it answers.
+            var recovered = CreateAsset();
+            failing.Setup(a => a.GetTotalAssets()).ReturnsAsync(1_000_000);
+            failing.Setup(a => a.GetNextAsset()).ReturnsAsync(recovered);
+            time.Now += TotalAccountImagesSelectionStrategy.FailureCooldown + TimeSpan.FromSeconds(1);
+
+            var afterRecovery = await strategy.GetNextAsset();
+            failing.Verify(a => a.GetTotalAssets(), Times.Exactly(2));
+            Assert.That(afterRecovery, Is.Not.Null);
+        }
+
+        [Test]
+        public async Task GetNextAsset_ChosenAccountFails_RetriesWithAnotherAccount()
+        {
+            var asset = CreateAsset();
+            var healthy = CreateAccount(1, [asset]);
+            healthy.Setup(a => a.GetNextAsset()).ReturnsAsync(asset);
+            // Its count is cached, so it is chosen, but fetching the asset fails.
+            var failing = CreateAccount(1_000_000_000, []);
+            failing.Setup(a => a.GetNextAsset()).ThrowsAsync(new HttpRequestException("down"));
+            var strategy = CreateStrategy(failing.Object, healthy.Object);
+
+            var result = await strategy.GetNextAsset();
+
+            Assert.That(result!.Value.Item1, Is.SameAs(healthy.Object));
+        }
+
+        [Test]
+        public void GetNextAsset_OnlyAccountFailsToFetch_Rethrows()
+        {
+            var failing = CreateAccount(10, []);
+            failing.Setup(a => a.GetNextAsset()).ThrowsAsync(new HttpRequestException("down"));
+            var strategy = CreateStrategy(failing.Object);
+
+            Assert.ThrowsAsync<HttpRequestException>(() => strategy.GetNextAsset());
+        }
+
+        [Test]
+        public async Task GetAssets_FailingAccount_ReturnsOtherAccountsAssets()
+        {
+            var assets = Enumerable.Range(0, 3).Select(_ => CreateAsset()).ToList();
+            var healthy = CreateAccount(3, assets);
+            var failing = new Mock<IAccountImmichFrameLogic>();
+            failing.Setup(a => a.GetTotalAssets()).ThrowsAsync(new HttpRequestException("down"));
+            failing.Setup(a => a.GetAssets()).ThrowsAsync(new HttpRequestException("down"));
+            var strategy = CreateStrategy(failing.Object, healthy.Object);
+
+            var result = (await strategy.GetAssets()).ToList();
+
+            Assert.That(result.Select(r => r.Item2.Id), Is.EquivalentTo(assets.Select(a => a.Id)));
+        }
+
         private static ApiException ApiError(int statusCode)
             => new("error", statusCode, "", new Dictionary<string, IEnumerable<string>>(), null!);
 
