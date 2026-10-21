@@ -13,7 +13,14 @@ public class TotalAccountImagesSelectionStrategy(
 {
     public async Task<(IAccountImmichFrameLogic, AssetResponseDto)?> GetNextAsset()
     {
-        var chosen = await _accounts.ChooseOne(logic => logic.GetTotalAssets());
+        var chosen = await _accounts.ChooseOne(GetTotalForAccount);
+        if (chosen == null)
+        {
+            // ChooseOne has nothing to pick when the weights sum to zero: no accounts, or every
+            // account reports an empty library. That is "no asset", not a server error.
+            _logger.LogDebug("No account has any assets to choose from");
+            return null;
+        }
 
         var asset = await chosen.GetNextAsset();
         if (asset != null)

@@ -112,7 +112,30 @@ namespace ImmichFrame.Core.Tests.Logic.AccountSelection
             Assert.That(result!.Value.Item2.Id, Is.EqualTo(asset.Id));
             _mockTracker.Verify(t => t.RecordAssetLocation(account.Object, asset.Id), Times.Once);
         }
-    
+
+        [Test]
+        public async Task GetNextAsset_NoAccounts_ReturnsNull()
+        {
+            var strategy = CreateStrategy();
+
+            var result = await strategy.GetNextAsset();
+
+            Assert.That(result, Is.Null);
+        }
+
+        [Test]
+        public async Task GetNextAsset_AllAccountsEmpty_ReturnsNull()
+        {
+            var account1 = CreateAccount(0, []);
+            var account2 = CreateAccount(0, []);
+            var strategy = CreateStrategy(account1.Object, account2.Object);
+
+            var result = await strategy.GetNextAsset();
+
+            Assert.That(result, Is.Null);
+            account1.Verify(a => a.GetNextAsset(), Times.Never);
+            account2.Verify(a => a.GetNextAsset(), Times.Never);
+        }
 
         private static ApiException ApiError(int statusCode)
             => new("error", statusCode, "", new Dictionary<string, IEnumerable<string>>(), null!);
