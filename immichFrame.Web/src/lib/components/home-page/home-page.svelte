@@ -114,7 +114,7 @@
 		infoVisible = false;
 		userPaused = false;
 		await assetComponent?.play?.();
-		await progressBar.play();
+		progressBar.play();
 	}
 
 	const showCursor = () => {
@@ -325,7 +325,7 @@
 
 			await tick();
 			await assetComponent?.play?.();
-			await progressBar?.play();
+			progressBar?.play();
 		} catch (caught) {
 			if (!(caught instanceof DOMException && caught.name === 'AbortError')) {
 				console.error('Asset transition failed:', caught);
@@ -722,7 +722,7 @@
 					fatalMediaError = false;
 					clearTimeout(videoStallTimeout);
 					if (!userPaused) {
-						await progressBar.play();
+						progressBar.play();
 					}
 				}}
 				onAssetLoaded={() => {
@@ -774,7 +774,7 @@
 				if (progressBarStatus == ProgressBarStatus.Paused) {
 					userPaused = false;
 					await assetComponent?.play?.();
-					await progressBar.play();
+					progressBar.play();
 				} else {
 					userPaused = true;
 					await assetComponent?.pause?.();
@@ -786,7 +786,7 @@
 					infoVisible = false;
 					userPaused = false;
 					await assetComponent?.play?.();
-					await progressBar.play();
+					progressBar.play();
 				} else {
 					infoVisible = true;
 					userPaused = true;

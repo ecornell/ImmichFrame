@@ -45,16 +45,17 @@
 		}
 	});
 
-	onMount(async () => {
-		if (autoplay) {
-			await play();
-		}
+	onMount(() => {
+		if (autoplay) play();
 	});
 
-	export const play = async () => {
+	// Starts the bar and returns at once. The tween's promise settles only when the bar fills (a
+	// whole slide) and never if pause() supersedes it, so awaiting it wedged callers; completion is
+	// reported through onDone by the effect above instead.
+	export const play = () => {
 		status = ProgressBarStatus.Playing;
 		onPlaying();
-		await progress.set(1);
+		void progress.set(1);
 	};
 
 	export const pause = async () => {
@@ -67,9 +68,7 @@
 	export const restart = async (autoplay: boolean) => {
 		await progress.set(0);
 
-		if (autoplay) {
-			await play();
-		}
+		if (autoplay) play();
 	};
 
 	export const reset = async () => {
