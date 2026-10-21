@@ -221,9 +221,92 @@ namespace ImmichFrame.Core.Tests.Logic.AccountSelection
             => new("error", statusCode, "", new Dictionary<string, IEnumerable<string>>(), null!);
 
         private void TrackerKnowsNothing() =>
-            _mockTracker
-                .Setup(t => t.ForAssetAsync(It.IsAny<Guid>(), It.IsAny<Func<IAccountImmichFrameLogic, Task<string>>>()))
-                .ThrowsAsync(new AssetNotFoundException());
+            _mockTracker.Setup(t => t.GetAccount(It.IsAny<Guid>())).Returns((IAccountImmichFrameLogic?)null);
+
+        private void TrackerKnows(Guid assetId, IAccountImmichFrameLogic account) =>
+            _mockTracker.Setup(t => t.GetAccount(assetId)).Returns(account);
+
+        [Test]
+        public async Task ForAssetAsync_TrackedAsset_AsksTheTrackedAccountFirst()
+        {
+            var assetId = Guid.NewGuid();
+            var other = CreateAccount(10, []);
+            var owner = CreateAccount(10, []);
+            TrackerKnows(assetId, owner.Object);
+            var strategy = CreateStrategy(other.Object, owner.Object);
+            var asked = new List<IAccountImmichFrameLogic>();
+
+            var result = await strategy.ForAssetAsync(assetId, logic =>
+            {
+                asked.Add(logic);
+                return Task.FromResult("found");
+            });
+
+            Assert.That(result, Is.EqualTo("found"));
+            Assert.That(asked, Is.EqualTo(new[] { owner.Object }));
+        }
+
+        [Test]
+        public async Task ForAssetAsync_TrackedAccountFromRetiredGeneration_IsStillUsed()
+        {
+            // During the grace period after a settings save the on-screen asset belongs to an account
+            // that is no longer in the current list.
+            var assetId = Guid.NewGuid();
+            var retired = CreateAccount(10, []);
+            TrackerKnows(assetId, retired.Object);
+            var strategy = CreateStrategy(CreateAccount(10, []).Object);
+
+            var result = await strategy.ForAssetAsync(assetId,
+                logic => logic == retired.Object ? Task.FromResult("found") : throw ApiError(404));
+
+            Assert.That(result, Is.EqualTo("found"));
+        }
+
+        [TestCase(401)]
+        [TestCase(403)]
+        public async Task ForAssetAsync_TrackedAccountRejectsKey_TriesTheNextAccount(int status)
+        {
+            // E.g. two accounts on the same server, one key since revoked.
+            var assetId = Guid.NewGuid();
+            var revoked = CreateAccount(10, []);
+            var working = CreateAccount(10, []);
+            TrackerKnows(assetId, revoked.Object);
+            var strategy = CreateStrategy(revoked.Object, working.Object);
+
+            var result = await strategy.ForAssetAsync(assetId,
+                logic => logic == revoked.Object ? throw ApiError(status) : Task.FromResult("found"));
+
+            Assert.That(result, Is.EqualTo("found"));
+            _mockTracker.Verify(t => t.RecordAssetLocation(working.Object, assetId), Times.Once);
+        }
+
+        [Test]
+        public async Task ForAssetAsync_TrackedAccountUnreachable_TriesTheNextAccount()
+        {
+            var assetId = Guid.NewGuid();
+            var down = CreateAccount(10, []);
+            var up = CreateAccount(10, []);
+            TrackerKnows(assetId, down.Object);
+            var strategy = CreateStrategy(down.Object, up.Object);
+
+            var result = await strategy.ForAssetAsync(assetId,
+                logic => logic == down.Object ? throw new HttpRequestException("down") : Task.FromResult("found"));
+
+            Assert.That(result, Is.EqualTo("found"));
+        }
+
+        [Test]
+        public void ForAssetAsync_UnreachableAndNotFoundElsewhere_ReportsTheOutageNotA404()
+        {
+            var assetId = Guid.NewGuid();
+            var down = CreateAccount(10, []);
+            var other = CreateAccount(10, []);
+            TrackerKnows(assetId, down.Object);
+            var strategy = CreateStrategy(down.Object, other.Object);
+
+            Assert.ThrowsAsync<HttpRequestException>(() => strategy.ForAssetAsync<string>(assetId,
+                logic => logic == down.Object ? throw new HttpRequestException("down") : throw ApiError(404)));
+        }
 
         [Test]
         public async Task ForAssetAsync_UntrackedAsset_AsksEachAccountAndRecordsTheOwner()

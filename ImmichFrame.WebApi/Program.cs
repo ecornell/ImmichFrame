@@ -108,7 +108,7 @@ builder.Services.AddSingleton<IImmichCatalogBrowser, ImmichCatalogBrowser>();
 // Services holding config-derived caches, flushed on save so changes are visible immediately.
 builder.Services.AddSingleton<ISettingsResettable>(srv => (ISettingsResettable)srv.GetRequiredService<IWeatherService>());
 builder.Services.AddSingleton<ISettingsResettable>(srv => (ISettingsResettable)srv.GetRequiredService<ICalendarService>());
-builder.Services.AddSingleton<IAssetAccountTracker, BloomFilterAssetAccountTracker>();
+builder.Services.AddSingleton<IAssetAccountTracker, AssetAccountTracker>();
 // One history for every account graph and client, so a settings save does not reset it.
 builder.Services.AddSingleton<AssetShowHistory>();
 builder.Services.AddSingleton<IAssetShowHistory>(srv => srv.GetRequiredService<AssetShowHistory>());

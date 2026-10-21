@@ -208,18 +208,18 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
 
     public async Task<T> ForAssetAsync<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
     {
-        try
-        {
-            return await _tracker.ForAssetAsync(assetId, f);
-        }
-        catch (AssetNotFoundException)
-        {
-            // The tracker only knows assets served by this process and settings generation, so a
-            // client still holding ids from before a restart or a settings save lands here. Ask
-            // every account instead; with a single account this always finds it.
-        }
+        // The account that served the asset first. The tracker only knows assets served by this
+        // process (a retired generation's accounts included, during their grace period), so a client
+        // still holding ids from before a restart falls through to asking every account; with a
+        // single account this always finds it.
+        var tracked = _tracker.GetAccount(assetId);
+        var candidates = tracked is null
+            ? _accounts
+            : _accounts.Where(account => !ReferenceEquals(account, tracked)).Prepend(tracked);
 
-        foreach (var account in _accounts)
+        ExceptionDispatchInfo? unreachable = null;
+
+        foreach (var account in candidates)
         {
             T result;
             try
@@ -228,23 +228,47 @@ public class TotalAccountImagesSelectionStrategy : IAccountSelectionStrategy
             }
             catch (ApiException e) when (e.StatusCode is 400 or 404)
             {
-                // Same rule as the tracker: 400/404 means "not in this account", anything else is real.
+                // Immich answers 400/404 for an asset that is not in this account.
                 continue;
             }
-
-            try
+            catch (Exception e) when (IsAccountUnavailable(e))
             {
-                await _tracker.RecordAssetLocation(account, assetId);
+                // This account could not answer at all (down, timed out, key rejected). Another
+                // account on the same server may still have the asset. Remembered so that, if no one
+                // has it, the caller sees the outage (502) rather than a misleading 404.
+                _logger.LogDebug("Account [{account}] could not be asked for asset {assetId}: {message}", account, assetId, e.Message);
+                unreachable = ExceptionDispatchInfo.Capture(e);
+                continue;
             }
-            catch (Exception e)
+            // Anything else (e.g. 416 for a bad Range, or a 500) is a real answer and propagates.
+
+            if (!ReferenceEquals(account, tracked))
             {
-                _logger.LogWarning(e, "Could not record the account for asset {assetId}", assetId);
+                try
+                {
+                    await _tracker.RecordAssetLocation(account, assetId);
+                }
+                catch (Exception e)
+                {
+                    _logger.LogWarning(e, "Could not record the account for asset {assetId}", assetId);
+                }
             }
 
             return result;
         }
 
+        unreachable?.Throw();
+
         _logger.LogError("Failed to locate account for asset {assetId}", assetId);
         throw new AssetNotFoundException();
     }
+
+    private static bool IsAccountUnavailable(Exception e) => e switch
+    {
+        ApiException { StatusCode: 401 or 403 } => true,
+        HttpRequestException => true,
+        // HttpClient's own timeout, as opposed to a caller cancelling.
+        TaskCanceledException { InnerException: TimeoutException } => true,
+        _ => false
+    };
 }

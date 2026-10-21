@@ -96,7 +96,7 @@ The core abstraction is `IAssetPool` (`ImmichFrame.Core/Logic/Pool/`): `GetAsset
 - `CachingApiAssetsPool` is the base for the filter pools: it fetches the full id list once per `ApiCache` window (`RefreshAlbumPeopleInterval` hours), applies account filters and excluded albums, then samples randomly.
 - `AggregatingAssetPool` adapts a one-at-a-time `GetNextAsset` into batched `GetAssets`.
 
-Above the pools, multi-account support layers the same way: `MultiImmichFrameLogicDelegate` implements `IImmichFrameLogic` by delegating to one `PooledImmichFrameLogic` per configured account, choosing between them with `TotalAccountImagesSelectionStrategy` (weighted by each account's total asset count). Because asset ids are only meaningful within their own Immich server, `BloomFilterAssetAccountTracker` records which account served each asset so follow-up calls (`GetAssetInfoById`, `GetAsset`, …) route back to the right one, and `WithAccount()` stamps `ImmichServerUrl` onto every returned `AssetResponseDto`.
+Above the pools, multi-account support layers the same way: `MultiImmichFrameLogicDelegate` implements `IImmichFrameLogic` by delegating to one `PooledImmichFrameLogic` per configured account, choosing between them with `TotalAccountImagesSelectionStrategy` (weighted by each account's total asset count). Because asset ids are only meaningful within their own Immich server, `AssetAccountTracker` records exactly which account served each asset so follow-up calls (`GetAssetInfoById`, `GetAsset`, …) route back to the right one, and `WithAccount()` stamps `ImmichServerUrl` onto every returned `AssetResponseDto`.
 
 ### Auth
 
