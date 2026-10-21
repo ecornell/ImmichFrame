@@ -24,6 +24,11 @@ public class AlbumAssetsPoolTests
                 It.IsAny<string>(),
                 It.IsAny<Func<Task<IEnumerable<AssetResponseDto>>>>()))
             .Returns<string, Func<Task<IEnumerable<AssetResponseDto>>>>((_, factory) => factory());
+        _mockApiCache
+            .Setup(m => m.GetOrAddAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<IEnumerable<Guid>>>>()))
+            .Returns<string, Func<Task<IEnumerable<Guid>>>>((_, factory) => factory());
 
         _mockImmichApi = new Mock<ImmichApi>("", null);
         _mockAccountSettings = new Mock<IAccountSettings>();

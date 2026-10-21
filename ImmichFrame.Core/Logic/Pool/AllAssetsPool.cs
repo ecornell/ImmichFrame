@@ -28,9 +28,9 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
 
     public async Task<IEnumerable<AssetResponseDto>> GetAssets(int requested, CancellationToken ct = default)
     {
-        var excludedAlbumAssets = await apiCache.GetOrAddAsync(
+        var excludedAssetIds = await apiCache.GetOrAddAsync(
             $"{nameof(AllAssetsPool)}_ExcludedAlbums",
-            () => AssetHelper.GetExcludedAlbumAssets(immichApi, accountSettings, ct));
+            () => AssetHelper.GetExcludedAlbumAssetIds(immichApi, accountSettings, ct));
 
         var result = new List<AssetResponseDto>(Math.Max(requested, 0));
         var ids = new HashSet<Guid>();
@@ -41,7 +41,7 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
             var size = round == 0 ? missing : Math.Max(missing * 2, MinTopUpSize);
             var found = (await immichApi.SearchRandomAsync(BuildSearch(size), ct)).ToList();
 
-            foreach (var asset in found.ApplyAccountFilters(accountSettings, excludedAlbumAssets))
+            foreach (var asset in found.ApplyAccountFilters(accountSettings, excludedAssetIds))
             {
                 if (result.Count == requested) break;
                 if (ids.Add(asset.Id)) result.Add(asset);

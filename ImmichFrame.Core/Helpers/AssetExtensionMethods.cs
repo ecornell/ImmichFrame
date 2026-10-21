@@ -10,12 +10,12 @@ namespace ImmichFrame.Core.Helpers
             return asset.Type == AssetTypeEnum.IMAGE || asset.Type == AssetTypeEnum.VIDEO;
         }
 
-        public static async Task<IEnumerable<AssetResponseDto>> ApplyAccountFilters(this Task<IEnumerable<AssetResponseDto>> unfilteredAssets, IAccountSettings accountSettings, IEnumerable<AssetResponseDto> excludedAlbumAssets)
+        public static async Task<IEnumerable<AssetResponseDto>> ApplyAccountFilters(this Task<IEnumerable<AssetResponseDto>> unfilteredAssets, IAccountSettings accountSettings, IEnumerable<Guid> excludedAssetIds)
         {
-            return ApplyAccountFilters(await unfilteredAssets, accountSettings, excludedAlbumAssets);
+            return ApplyAccountFilters(await unfilteredAssets, accountSettings, excludedAssetIds);
         }
 
-        public static IEnumerable<AssetResponseDto> ApplyAccountFilters(this IEnumerable<AssetResponseDto> unfilteredAssets, IAccountSettings accountSettings, IEnumerable<AssetResponseDto> excludedAlbumAssets)
+        public static IEnumerable<AssetResponseDto> ApplyAccountFilters(this IEnumerable<AssetResponseDto> unfilteredAssets, IAccountSettings accountSettings, IEnumerable<Guid> excludedAssetIds)
         {
             // Display supported media types
             var assets = unfilteredAssets.Where(asset => asset.IsSupportedAsset());
@@ -43,7 +43,9 @@ namespace ImmichFrame.Core.Helpers
                 assets = assets.Where(x => x.ExifInfo?.Rating == rating);
             }
 
-            assets = assets.WhereExcludes(excludedAlbumAssets, t => t.Id);
+            var excluded = excludedAssetIds as IReadOnlySet<Guid> ?? excludedAssetIds.ToHashSet();
+            if (excluded.Count > 0)
+                assets = assets.Where(x => !excluded.Contains(x.Id));
 
             return assets;
         }

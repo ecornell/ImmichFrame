@@ -7,9 +7,15 @@ namespace ImmichFrame.Core.Helpers;
 
 public static class AssetHelper
 {
-    public static async Task<IEnumerable<AssetResponseDto>> GetExcludedAlbumAssets(ImmichApi immichApi, IAccountSettings accountSettings, CancellationToken ct = default)
+    /// <summary>
+    /// The ids of every asset in the account's excluded albums. Only ids are kept: each pool caches
+    /// this for its refresh window, and full DTOs (with EXIF and people) for a large excluded album
+    /// would be held in memory several times over for nothing.
+    /// </summary>
+    /// <remarks>Typed as <see cref="IEnumerable{T}"/> for the cache; the value is a <see cref="HashSet{T}"/>.</remarks>
+    public static async Task<IEnumerable<Guid>> GetExcludedAlbumAssetIds(ImmichApi immichApi, IAccountSettings accountSettings, CancellationToken ct = default)
     {
-        var excludedAlbumAssets = new List<AssetResponseDto>();
+        var excludedAlbumAssets = new HashSet<Guid>();
 
         foreach (var albumId in accountSettings?.ExcludedAlbums ?? new())
         {
@@ -26,7 +32,7 @@ public static class AssetHelper
 
                 if (searchResponse.Assets == null) break;
 
-                excludedAlbumAssets.AddRange(searchResponse.Assets.Items);
+                excludedAlbumAssets.UnionWith(searchResponse.Assets.Items.Select(asset => asset.Id));
                 var nextPage = SearchAssetPagination.NextPage(searchResponse.Assets, page);
                 if (!nextPage.HasValue) break;
                 page = nextPage.Value;

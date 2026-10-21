@@ -43,6 +43,13 @@ public class AllAssetsPoolTests
             It.IsAny<Func<Task<IEnumerable<AssetResponseDto>>>>()
         ))
         .Returns<string, Func<Task<IEnumerable<AssetResponseDto>>>>(async (key, factory) => await factory());
+
+        // Excluded-album asset ids
+        _mockApiCache.Setup(c => c.GetOrAddAsync(
+            It.IsAny<string>(),
+            It.IsAny<Func<Task<IEnumerable<Guid>>>>()
+        ))
+        .Returns<string, Func<Task<IEnumerable<Guid>>>>(async (key, factory) => await factory());
     }
 
     private List<AssetResponseDto> CreateSampleAssets(int count, string idPrefix, AssetTypeEnum type, int? rating = null)
