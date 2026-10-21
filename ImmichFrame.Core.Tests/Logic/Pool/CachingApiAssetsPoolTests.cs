@@ -186,6 +186,31 @@ public class CachingApiAssetsPoolTests
     }
 
     [Test]
+    public async Task CachedAssets_AreFilteredOnce_NotOnEveryCountOrPick()
+    {
+        var enumerations = 0;
+        IEnumerable<AssetResponseDto> Counting(IEnumerable<AssetResponseDto> source)
+        {
+            enumerations++;
+            foreach (var asset in source) yield return asset;
+        }
+
+        var assets = CreateSampleAssets();
+        var pool = new TestableCachingApiAssetsPool(new ImmichFrame.Core.Helpers.ApiCache(TimeSpan.FromHours(1)),
+            _mockImmichApi.Object, _mockAccountSettings.Object)
+        {
+            LoadAssetsFunc = () => Task.FromResult(Counting(assets))
+        };
+        _mockAccountSettings.SetupGet(s => s.ExcludedAlbums).Returns(new List<Guid>());
+
+        for (var i = 0; i < 3; i++) await pool.GetAssetCount();
+        await pool.GetAssets(1);
+
+        Assert.That(enumerations, Is.EqualTo(1));
+        Assert.That(await pool.GetAssetCount(), Is.EqualTo(4)); // the four images; the video is filtered out
+    }
+
+    [Test]
     public async Task ApplyAccountFilters_FiltersArchived()
     {
         // Arrange

@@ -11,7 +11,12 @@ public abstract class CachingApiAssetsPool(IApiCache apiCache, ImmichApi immichA
 
     public async Task<long> GetAssetCount(CancellationToken ct = default)
     {
-        return (await AllAssets(ct)).DistinctBy(asset => asset.Id).LongCount();
+        // MultiAssetPool asks every sub-pool for its count on every pick, so this must not walk the
+        // list. The cached value is already filtered and de-duplicated (see AllAssets).
+        var assets = await AllAssets(ct);
+        return assets.TryGetNonEnumeratedCount(out var count)
+            ? count
+            : assets.DistinctBy(asset => asset.Id).LongCount();
     }
 
     public async Task<IEnumerable<AssetResponseDto>> GetAssets(int requested, CancellationToken ct = default)
@@ -26,7 +31,13 @@ public abstract class CachingApiAssetsPool(IApiCache apiCache, ImmichApi immichA
     {
         var excludedAlbumAssets = await apiCache.GetOrAddAsync($"{GetType().FullName}_ExcludedAlbums", () => AssetHelper.GetExcludedAlbumAssets(immichApi, accountSettings, ct));
 
-        return await apiCache.GetOrAddAsync(GetType().FullName!, () => LoadAssets(ct).ApplyAccountFilters(accountSettings, excludedAlbumAssets));
+        // Materialized once per cache window. ApplyAccountFilters returns a deferred query, so caching
+        // it as-is re-ran every filter (and the de-duplication) over the whole library on each count
+        // and each pick.
+        return await apiCache.GetOrAddAsync<IEnumerable<AssetResponseDto>>(GetType().FullName!, async () =>
+            (await LoadAssets(ct).ApplyAccountFilters(accountSettings, excludedAlbumAssets))
+                .DistinctBy(asset => asset.Id)
+                .ToArray());
     }
 
     protected abstract Task<IEnumerable<AssetResponseDto>> LoadAssets(CancellationToken ct = default);
